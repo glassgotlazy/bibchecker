@@ -177,6 +177,10 @@ class BibEntry:
     field_order: tuple[str, ...] = ()
     start_line: int | None = None
     source: str | None = None
+    #: The text this entry was recovered from, when it did not come from a
+    #: .bib file. Set for references extracted from a PDF, so the report can
+    #: show what was actually read off the page.
+    raw: str | None = None
 
     def get(self, name: str) -> str | None:
         return self.fields.get(name.lower())

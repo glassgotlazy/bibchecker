@@ -15,9 +15,18 @@ from .cache import DiskCache
 from .config import Config, load_config
 from .engine import check_bibliography
 from .fixer import apply_fixes, plan_fixes, write_fixed
-from .models import Report, Status
-from .parsing import parse_bibtex_file
+from .export import to_bibtex
+from .models import CrossCheck, Report, Status
+from .parsing import ParsedBib, parse_bibtex_file
+from .pdf import (
+    PdfExtractionError,
+    crosscheck_pdf,
+    extract_text,
+    find_reference_section,
+    references_to_bib,
+)
 from .report import make_console, render_human, render_json
+from rich.console import Console
 
 __all__ = ["main", "build_parser"]
 
@@ -43,6 +52,8 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "examples:\n"
             "  bibcheck refs.bib\n"
+            "  bibcheck paper.pdf\n"
+            "  bibcheck paper.pdf --export-bib refs.bib\n"
             "  bibcheck refs.bib --tex paper.tex\n"
             "  bibcheck refs.bib --json report.json\n"
             "  bibcheck refs.bib --fix fixed.bib\n"
@@ -50,7 +61,13 @@ def build_parser() -> argparse.ArgumentParser:
             "  bibcheck refs.bib --offline\n"
         ),
     )
-    parser.add_argument("bibfile", nargs="?", type=Path, help="the .bib file to check")
+    parser.add_argument(
+        "bibfile",
+        nargs="?",
+        type=Path,
+        metavar="FILE",
+        help="the .bib file to check, or a paper .pdf to read references out of",
+    )
     parser.add_argument(
         "--tex",
         type=Path,
@@ -70,7 +87,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="write corrected metadata to a NEW file (never edits the input)",
     )
     parser.add_argument(
-        "--force", action="store_true", help="allow --fix to overwrite an existing file"
+        "--export-bib",
+        type=Path,
+        metavar="PATH",
+        help="write a .bib file built from the authoritative records (use with a PDF)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="allow --fix or --export-bib to overwrite an existing file",
     )
     parser.add_argument(
         "--fail-on",
@@ -164,9 +189,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_USAGE
 
     started = time.monotonic()
-    parsed = parse_bibtex_file(args.bibfile)
+    try:
+        parsed, crosscheck = _load_input(args, errors)
+    except PdfExtractionError as error:
+        errors.print(f"[red]error:[/red] {error}")
+        return EXIT_USAGE
+
     report = asyncio.run(
-        check_bibliography(parsed, config, manuscript_path=args.tex)
+        check_bibliography(
+            parsed, config, manuscript_path=args.tex, crosscheck=crosscheck
+        )
     )
     elapsed = time.monotonic() - started
 
@@ -179,9 +211,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     render_human(report, console, elapsed=elapsed, show_ok=not args.quiet)
 
     if args.json is not None:
-        _write_json(report, args.json, errors)
+        _write_json(report, args.json)
+
+    if args.export_bib is not None:
+        if _write_export(report, args, errors) != EXIT_OK:
+            return EXIT_USAGE
 
     if args.fix is not None:
+        if _is_pdf(args.bibfile):
+            errors.print(
+                "[red]error:[/red] --fix edits a .bib file; for a PDF use "
+                "--export-bib to write one instead"
+            )
+            return EXIT_USAGE
         if _write_fix(report, parsed, args, errors) != EXIT_OK:
             return EXIT_USAGE
 
@@ -190,7 +232,74 @@ def main(argv: Sequence[str] | None = None) -> int:
     return EXIT_OK
 
 
-def _write_json(report: Report, path: Path, errors: object) -> None:
+def _is_pdf(path: Path) -> bool:
+    """Detect a PDF by magic bytes, not by extension.
+
+    A file named ``refs.bib`` that is actually a PDF should still work, and a
+    ``.pdf`` that is really BibTeX should not be fed to the PDF reader.
+    """
+    if path.suffix.lower() == ".pdf":
+        return True
+    try:
+        with path.open("rb") as handle:
+            return handle.read(5) == b"%PDF-"
+    except OSError:
+        return False
+
+
+def _load_input(
+    args: argparse.Namespace, errors: Console
+) -> tuple[ParsedBib, CrossCheck | None]:
+    """Read either a .bib file or a paper PDF into checkable entries."""
+    if not _is_pdf(args.bibfile):
+        return parse_bibtex_file(args.bibfile), None
+
+    text = extract_text(args.bibfile)
+    parsed, references = references_to_bib(text, source=str(args.bibfile))
+    body, _ = find_reference_section(text)
+
+    if references:
+        weak = [reference for reference in references if reference.confidence < 0.5]
+        errors.print(
+            f"read {len(references)} references from {args.bibfile.name}"
+            + (f" ({len(weak)} with no identifier to check against)" if weak else ""),
+            soft_wrap=True,
+        )
+
+    # --tex wins if given; otherwise the PDF's own body provides the crosscheck.
+    if args.tex is not None:
+        return parsed, None
+    return parsed, crosscheck_pdf(body, [entry.key for entry in parsed.entries])
+
+
+def _write_export(report: Report, args: argparse.Namespace, errors: Console) -> int:
+    """Write a .bib built from what the registry says."""
+    target: Path = args.export_bib
+    if target.exists() and not args.force:
+        errors.print(
+            f"[red]error:[/red] {target} already exists (pass --force to overwrite)"
+        )
+        return EXIT_USAGE
+    if target.resolve() == args.bibfile.resolve():
+        errors.print("[red]error:[/red] --export-bib must not overwrite the input")
+        return EXIT_USAGE
+
+    text = to_bibtex(
+        report,
+        header=f"Generated by bibcheck {__version__} from {Path(args.bibfile).name}",
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+    resolved = sum(1 for entry in report.entries if entry.resolved)
+    errors.print(
+        f"wrote {target} ({resolved} of {len(report.entries)} entries verified "
+        "against Crossref)",
+        soft_wrap=True,
+    )
+    return EXIT_OK
+
+
+def _write_json(report: Report, path: Path) -> None:
     payload = render_json(report)
     if str(path) == "-":
         sys.stdout.write(payload + "\n")
@@ -200,15 +309,8 @@ def _write_json(report: Report, path: Path, errors: object) -> None:
 
 
 def _write_fix(
-    report: Report, parsed: object, args: argparse.Namespace, errors: object
+    report: Report, parsed: ParsedBib, args: argparse.Namespace, errors: Console
 ) -> int:
-    from rich.console import Console
-
-    from .parsing import ParsedBib
-
-    assert isinstance(parsed, ParsedBib)
-    assert isinstance(errors, Console)
-
     planned = plan_fixes(report)
     if not planned:
         errors.print("nothing could be corrected with confidence; no file written")
@@ -223,7 +325,9 @@ def _write_fix(
         errors.print(f"[red]error:[/red] {error}")
         return EXIT_USAGE
 
-    errors.print(f"\nwrote {args.fix} with {len(applied)} correction(s):")
+    errors.print(
+        f"\nwrote {args.fix} with {len(applied)} correction(s):", soft_wrap=True
+    )
     for fix in applied:
         errors.print(f"  {fix.describe()}")
     skipped = len(planned) - len(applied)

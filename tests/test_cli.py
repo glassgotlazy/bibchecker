@@ -265,3 +265,99 @@ class TestMalformedInput:
         path.write_text("", encoding="utf-8")
         assert main([str(path)]) == EXIT_OK
         assert "nothing to report" in capsys.readouterr().out
+
+
+class TestPdfInput:
+    @pytest.fixture
+    def paper(self, request: pytest.FixtureRequest) -> Path:
+        return Path(request.config.rootpath) / "tests" / "data" / "pdf" / "paper.pdf"
+
+    @respx.mock
+    def test_a_pdf_is_checked_without_any_bib_file(
+        self, paper: Path, crossref_fixture: Loader, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        respx.get(url__startswith=f"{WORKS}/10.1016/").mock(
+            return_value=httpx.Response(200, json=crossref_fixture("work_retracted"))
+        )
+        respx.get(url__startswith=WORKS).mock(
+            return_value=httpx.Response(404, json=crossref_fixture("not_found"))
+        )
+        assert main([str(paper)]) == EXIT_OK
+        captured = capsys.readouterr()
+        assert "read 6 references" in captured.err
+        assert "ref4" in captured.out
+        assert "RETRACTED" in captured.out
+
+    @respx.mock
+    def test_a_pdf_is_detected_by_content_not_extension(
+        self, paper: Path, tmp_path: Path, crossref_fixture: Loader
+    ) -> None:
+        """A PDF misnamed .bib must still be read as a PDF."""
+        respx.get(url__startswith=WORKS).mock(
+            return_value=httpx.Response(404, json=crossref_fixture("not_found"))
+        )
+        misnamed = tmp_path / "refs.bib"
+        misnamed.write_bytes(paper.read_bytes())
+        assert main([str(misnamed)]) == EXIT_OK
+
+    @respx.mock
+    def test_fail_on_critical_works_for_a_pdf(
+        self, paper: Path, crossref_fixture: Loader
+    ) -> None:
+        respx.get(url__startswith=f"{WORKS}/10.1016/").mock(
+            return_value=httpx.Response(200, json=crossref_fixture("work_retracted"))
+        )
+        respx.get(url__startswith=WORKS).mock(
+            return_value=httpx.Response(404, json=crossref_fixture("not_found"))
+        )
+        assert main([str(paper), "--fail-on", "critical"]) == EXIT_FAILED
+
+    @respx.mock
+    def test_export_bib_writes_a_parseable_file(
+        self, paper: Path, tmp_path: Path, crossref_fixture: Loader
+    ) -> None:
+        from bibcheck.parsing import parse_bibtex_file
+
+        respx.get(url__startswith=f"{WORKS}/10.1109/").mock(
+            return_value=httpx.Response(200, json=crossref_fixture("work_resnet"))
+        )
+        respx.get(url__startswith=WORKS).mock(
+            return_value=httpx.Response(404, json=crossref_fixture("not_found"))
+        )
+        target = tmp_path / "from-pdf.bib"
+        assert main([str(paper), "--export-bib", str(target)]) == EXIT_OK
+        parsed = parse_bibtex_file(target)
+        assert len(parsed.entries) == 6
+        assert parsed.problems == ()
+
+    @respx.mock
+    def test_export_bib_refuses_to_clobber(
+        self, paper: Path, tmp_path: Path, crossref_fixture: Loader
+    ) -> None:
+        respx.get(url__startswith=WORKS).mock(
+            return_value=httpx.Response(404, json=crossref_fixture("not_found"))
+        )
+        target = tmp_path / "out.bib"
+        target.write_text("existing", encoding="utf-8")
+        assert main([str(paper), "--export-bib", str(target)]) == EXIT_USAGE
+        assert target.read_text(encoding="utf-8") == "existing"
+
+    @respx.mock
+    def test_fix_on_a_pdf_points_at_export_bib_instead(
+        self, paper: Path, tmp_path: Path, crossref_fixture: Loader,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """--fix edits a .bib in place-adjacent terms; a PDF has none."""
+        respx.get(url__startswith=WORKS).mock(
+            return_value=httpx.Response(404, json=crossref_fixture("not_found"))
+        )
+        assert main([str(paper), "--fix", str(tmp_path / "x.bib")]) == EXIT_USAGE
+        assert "--export-bib" in capsys.readouterr().err
+
+    def test_a_file_that_is_not_a_pdf_named_pdf_is_a_clear_error(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        path = tmp_path / "fake.pdf"
+        path.write_text("I am not a PDF", encoding="utf-8")
+        assert main([str(path)]) == EXIT_USAGE
+        assert "could not read the PDF" in capsys.readouterr().err

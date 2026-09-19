@@ -28,7 +28,15 @@ from typing import Any, Awaitable, Callable, Final, Iterable, MutableMapping
 
 from .config import Config, load_config
 from .engine import check_bibliography
-from .parsing import parse_bibtex
+from .models import CrossCheck
+from .parsing import ParsedBib, parse_bibtex
+from .pdf import (
+    PdfExtractionError,
+    crosscheck_pdf,
+    extract_text,
+    find_reference_section,
+    references_to_bib,
+)
 
 __all__ = ["create_app", "BibcheckApp"]
 
@@ -40,6 +48,8 @@ Send = Callable[[MutableMapping[str, Any]], Awaitable[None]]
 MAX_BODY_BYTES: Final[int] = 2 * 1024 * 1024
 MAX_ENTRIES: Final[int] = 200
 MAX_MANUSCRIPT_BYTES: Final[int] = 4 * 1024 * 1024
+#: A PDF is far bigger than a .bib for the same number of references.
+MAX_PDF_BYTES: Final[int] = 20 * 1024 * 1024
 DEADLINE_SECONDS: Final[float] = 45.0
 
 #: Distinguishes "caller did not specify a static root" (auto-detect) from
@@ -138,24 +148,60 @@ class BibcheckApp:
         await _respond(send, 200, _HTML, body, extra={"cache-control": "no-cache"})
 
     async def _check(self, scope: Scope, receive: Receive, send: Send) -> None:
-        raw, too_large = await _read_body(receive, MAX_BODY_BYTES)
+        raw, too_large = await _read_body(receive, MAX_PDF_BYTES)
         if too_large:
             await _json(
                 send,
                 413,
-                {"error": f"bibliography is larger than {MAX_BODY_BYTES // 1024} KB"},
+                {"error": f"upload is larger than {MAX_PDF_BYTES // (1024 * 1024)} MB"},
             )
             return
 
-        bib_text, tex_text, error = _parse_request(raw, scope)
-        if error is not None:
-            await _json(send, 400, {"error": error})
-            return
+        crosscheck: CrossCheck | None = None
+        tex_text: str | None = None
 
-        parsed = parse_bibtex(bib_text, path="uploaded.bib")
-        if not parsed.entries and not parsed.problems:
-            await _json(send, 400, {"error": "no BibTeX entries were found in that file"})
-            return
+        # A PDF is recognised by its magic bytes rather than a filename, so the
+        # same endpoint serves a dropped .bib and a dropped paper.
+        if raw[:5] == b"%PDF-":
+            try:
+                text = extract_text(raw)
+            except PdfExtractionError as pdf_error:
+                await _json(send, 400, {"error": str(pdf_error)})
+                return
+            parsed, references = references_to_bib(text, source="uploaded.pdf")
+            body, _ = find_reference_section(text)
+            crosscheck = crosscheck_pdf(body, [entry.key for entry in parsed.entries])
+            if not parsed.entries:
+                await _json(
+                    send,
+                    400,
+                    {
+                        "error": (
+                            "no references could be read from that PDF; the "
+                            "reference section may be formatted unusually, or "
+                            "the file may be a scan needing OCR first"
+                        )
+                    },
+                )
+                return
+        else:
+            if len(raw) > MAX_BODY_BYTES:
+                await _json(
+                    send,
+                    413,
+                    {"error": f"bibliography is larger than {MAX_BODY_BYTES // 1024} KB"},
+                )
+                return
+            bib_text, tex_text, error = _parse_request(raw, scope)
+            if error is not None:
+                await _json(send, 400, {"error": error})
+                return
+            parsed = parse_bibtex(bib_text, path="uploaded.bib")
+            if not parsed.entries and not parsed.problems:
+                await _json(
+                    send, 400, {"error": "no BibTeX entries were found in that file"}
+                )
+                return
 
         truncated = False
         if len(parsed.entries) > MAX_ENTRIES:
@@ -167,7 +213,9 @@ class BibcheckApp:
         config = self._config or _serverless_config()
         try:
             report = await asyncio.wait_for(
-                check_bibliography(parsed, config, manuscript_text=tex_text),
+                check_bibliography(
+                    parsed, config, manuscript_text=tex_text, crosscheck=crosscheck
+                ),
                 timeout=DEADLINE_SECONDS,
             )
         except asyncio.TimeoutError:

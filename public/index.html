@@ -177,6 +177,7 @@
   <div class="badges">
     <span class="badge">Python 3.11+</span>
     <span class="badge">No API key</span>
+    <span class="badge">Reads .bib or .pdf</span>
     <span class="badge">Offline-capable</span>
     <span class="badge">mypy --strict</span>
     <span class="badge">273 tests</span>
@@ -234,19 +235,20 @@
 <section id="try">
   <h2>Try it</h2>
   <p>
-    Drop a <code>.bib</code> here and it is checked against Crossref in the
-    browser — nothing is stored, and the file never leaves the request.
-    Add a <code>.tex</code> to also find uncited entries and undefined keys.
+    Drop a <code>.bib</code> — or the paper <code>.pdf</code> itself, and the
+    references are read straight out of it. Checked against Crossref on the
+    spot; nothing is stored, and the file never leaves the request. Add a
+    <code>.tex</code> to also find uncited entries and undefined keys.
   </p>
 
   <div class="drop" id="drop">
-    <h3>Drop your <code>.bib</code> here</h3>
-    <p>or choose a file — up to 200 entries</p>
+    <h3>Drop your <code>.bib</code> or <code>.pdf</code> here</h3>
+    <p>or choose a file — up to 200 references</p>
     <div class="files" id="files" hidden></div>
     <div class="actions">
       <label class="pick" for="picker">Choose files
         <input id="picker" class="visually-hidden" type="file"
-               accept=".bib,.tex,.md,text/plain" multiple>
+               accept=".bib,.pdf,.tex,.md,text/plain,application/pdf" multiple>
       </label>
       <button class="primary" id="run" disabled>Check references</button>
     </div>
@@ -349,6 +351,8 @@
   const GLYPH = { ok: '\u2713', warn: '\u26a0', critical: '\u2715',
                   unresolved: '?', network_error: '~' };
   const state = { bib: null, tex: null };
+  const isPdf = (f) => f && (f.name.toLowerCase().endsWith('.pdf') ||
+                             f.type === 'application/pdf');
 
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
     (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
@@ -376,10 +380,13 @@
   function accept(fileList) {
     for (const file of fileList) {
       const lower = file.name.toLowerCase();
-      if (lower.endsWith('.bib')) state.bib = file;
+      if (lower.endsWith('.bib') || lower.endsWith('.pdf')) state.bib = file;
       else if (lower.endsWith('.tex') || lower.endsWith('.md')) state.tex = file;
       else if (!state.bib) state.bib = file;
     }
+    // A PDF carries its own reference list and its own citations, so a
+    // separate manuscript would only confuse matters.
+    if (isPdf(state.bib)) state.tex = null;
     renderChips();
   }
 
@@ -432,16 +439,28 @@
   async function check() {
     if (!state.bib) return;
     runBtn.disabled = true;
+    const verb = isPdf(state.bib) ? 'reading references from' : 'checking';
     result.innerHTML = `<div class="term mono"><span class="spin">\u25e0</span>
-      &nbsp;checking ${esc(state.bib.name)}\u2026</div>`;
+      &nbsp;${verb} ${esc(state.bib.name)}\u2026</div>`;
     try {
-      const body = { bib: await state.bib.text() };
-      if (state.tex) body.tex = await state.tex.text();
-      const res = await fetch('/api/check', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+      // A PDF is posted as raw bytes; the server recognises it by its magic
+      // bytes, so no multipart handling is needed on either side.
+      let res;
+      if (isPdf(state.bib)) {
+        res = await fetch('/api/check', {
+          method: 'POST',
+          headers: { 'content-type': 'application/pdf' },
+          body: await state.bib.arrayBuffer(),
+        });
+      } else {
+        const body = { bib: await state.bib.text() };
+        if (state.tex) body.tex = await state.tex.text();
+        res = await fetch('/api/check', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      }
       const data = await res.json();
       if (!res.ok) { showError(data.error || `request failed (${res.status})`); return; }
       render(data);

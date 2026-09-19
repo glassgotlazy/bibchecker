@@ -7,21 +7,24 @@ the wrong year, list the wrong venue, or point at retracted work. Checking 40+
 references by hand is the bottleneck. `bibcheck` automates it.
 
 ```
-bibcheck refs.bib                    # human-readable report
-bibcheck refs.bib --tex paper.tex    # also cross-check cited/uncited keys
-bibcheck refs.bib --json report.json # machine-readable
-bibcheck refs.bib --fix fixed.bib    # corrected metadata, written to a NEW file
-bibcheck refs.bib --fail-on critical # nonzero exit for CI
-bibcheck refs.bib --offline          # cache only, no network
+bibcheck refs.bib                      # human-readable report
+bibcheck paper.pdf                     # read the references out of the PDF itself
+bibcheck paper.pdf --export-bib refs.bib   # ...and write a .bib from them
+bibcheck refs.bib --tex paper.tex      # also cross-check cited/uncited keys
+bibcheck refs.bib --json report.json   # machine-readable
+bibcheck refs.bib --fix fixed.bib      # corrected metadata, written to a NEW file
+bibcheck refs.bib --fail-on critical   # nonzero exit for CI
+bibcheck refs.bib --offline            # cache only, no network
 ```
 
 ## Status
 
-Feature-complete against the original brief: parsing and normalization, the
-Crossref client with its disk cache and rate limiting, all six checks, the
-terminal and JSON reports, `--fix`, the manuscript crosscheck, and a web
-version that runs the same checks in a browser. **431 tests**, `mypy --strict`
-clean, and the suite passes with no network access at all.
+Feature-complete against the original brief, plus PDF input: parsing and
+normalization, the Crossref client with its disk cache and rate limiting, all
+six checks, the terminal and JSON reports, `--fix`, the manuscript crosscheck,
+reading references straight out of a paper PDF, and a web version that runs
+the same checks in a browser. **490 tests**, `mypy --strict` clean, and the
+suite passes with no network access at all.
 
 One caveat worth stating plainly: the recorded Crossref fixtures were written
 against Crossref's documented schema rather than captured from live calls, so
@@ -41,6 +44,7 @@ handled; which one appears in practice is unverified.
 | 4 | arXiv preprint superseded by a published version | `preprint_superseded` | WARN |
 | 5 | Same work cited under two keys | `duplicate_work` | WARN |
 | 6 | Bib entry never cited / `\cite` key with no entry | `uncited_entry`, `undefined_citation` | INFO / CRITICAL |
+| — | A reference read from a PDF that could not be parsed | `malformed_entry` | WARN |
 | — | Malformed entry, duplicate key, bad DOI syntax | `malformed_entry`, `duplicate_key`, `malformed_doi` | WARN |
 
 ## Design
@@ -195,6 +199,63 @@ Colour carries meaning and nothing else does, and it turns itself off
 automatically when stdout is not a terminal — piping to a file or a CI log
 yields clean text with no flag needed.
 
+## Reading a PDF
+
+Often there is no `.bib` to hand — a co-author sent a PDF, or the submission is
+the only artefact left. Point bibcheck at the paper itself:
+
+```sh
+bibcheck paper.pdf
+```
+
+```
+read 6 references from paper.pdf (2 with no identifier to check against)
+
+  bibcheck  paper.pdf  ·  6 entries · crossref · 1.8s
+
+  ✓  ref1
+  ✓  ref2
+  ⚠  ref3   preprint superseded  → 10.18653/v1/2021.acl-1.1
+  ✕  ref4   this work has been RETRACTED  10.1016/s0140-6736(97)11096-0
+  ✕  ref5   DOI does not resolve  10.9999/jac.2021.99999
+  ?  ref6   no DOI, and no confident match found by title
+
+  2 critical   1 warn   1 unresolved   2 ok
+```
+
+Keys are the reference's own number, so `ref4` sends you straight to `[4]` on
+the page. The PDF is both the bibliography *and* the manuscript, so the
+cited/uncited crosscheck runs with no `--tex` needed.
+
+Then turn it into a real bibliography, built from the **authoritative** records
+rather than from whatever survived extraction:
+
+```sh
+bibcheck paper.pdf --export-bib refs.bib
+```
+
+Anything that did not resolve is still written out, marked
+`% unverified: this entry could not be resolved, and is as-read` — nothing
+silently disappears from a bibliography.
+
+### What to expect from extraction
+
+PDF text is positioned glyphs, not sentences, so column order, line breaks and
+hyphenation all have to be undone by guesswork. The module is built around that
+rather than pretending otherwise:
+
+- Every reference keeps its **raw extracted text**, so you can see what was
+  actually read off the page.
+- A reference that cannot be parsed is **reported, never dropped** — a missing
+  reference would be a silent lie about how many were checked.
+- Each parse carries a confidence, and a reference carrying a DOI is visibly
+  stronger than one assembled from guesswork. A DOI or arXiv id makes the rest
+  of the parse irrelevant, because the registry supplies the truth.
+
+Numbered styles (`[1]`, `1.`) split most reliably; author-year styles fall back
+to blank-line separation. A scanned PDF with no text layer is reported as
+needing OCR rather than returning nothing.
+
 ## Exit codes
 
 Findings alone never fail a build; `--fail-on` is opt-in.
@@ -269,10 +330,13 @@ pip install -e ".[dev]" uvicorn
 uvicorn app:app --reload        # then open http://127.0.0.1:8000
 ```
 
-`POST /api/check` takes either a JSON envelope or a raw `.bib` body:
+`POST /api/check` takes a JSON envelope, a raw `.bib` body, or a PDF — which is
+recognised by its magic bytes, so no multipart handling is needed on either
+side:
 
 ```sh
 curl -X POST localhost:8000/api/check --data-binary @refs.bib
+curl -X POST localhost:8000/api/check --data-binary @paper.pdf
 curl -X POST localhost:8000/api/check -H 'content-type: application/json' \
      -d '{"bib": "@article{...}", "tex": "\\cite{key}"}'
 ```

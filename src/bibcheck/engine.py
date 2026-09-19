@@ -50,6 +50,7 @@ async def check_bibliography(
     *,
     manuscript_path: str | Path | None = None,
     manuscript_text: str | None = None,
+    crosscheck: CrossCheck | None = None,
     client: CrossrefClient | None = None,
 ) -> Report:
     """Check every entry, then apply the bibliography-level rules."""
@@ -70,14 +71,17 @@ async def check_bibliography(
         _with_problems(report, duplicates.get(report.key, ())) for report in reports
     )
 
-    crosscheck = None
-    text = _read_manuscript(manuscript_path, manuscript_text)
-    if text is not None:
-        crosscheck = crosscheck_manuscript(
-            [entry.key for entry in parsed.entries],
-            text,
-            manuscript=str(manuscript_path) if manuscript_path else None,
-        )
+    # A PDF supplies its own crosscheck, since the document is both the
+    # bibliography and the manuscript.
+    if crosscheck is None:
+        text = _read_manuscript(manuscript_path, manuscript_text)
+        if text is not None:
+            crosscheck = crosscheck_manuscript(
+                [entry.key for entry in parsed.entries],
+                text,
+                manuscript=str(manuscript_path) if manuscript_path else None,
+            )
+    if crosscheck is not None:
         reports = tuple(_with_crosscheck(report, crosscheck) for report in reports)
 
     return Report(

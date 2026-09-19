@@ -232,3 +232,71 @@ class TestFailureHandling:
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
             response = await client.get("/")
         assert response.status_code == 500
+
+
+class TestPdfUpload:
+    @pytest.fixture
+    def paper_bytes(self, request: pytest.FixtureRequest) -> bytes:
+        root = Path(request.config.rootpath)
+        return (root / "tests" / "data" / "pdf" / "paper.pdf").read_bytes()
+
+    @respx.mock
+    async def test_a_pdf_body_is_read_and_checked(
+        self, client: httpx.AsyncClient, paper_bytes: bytes, crossref_fixture: Loader
+    ) -> None:
+        respx.get(url__startswith=f"{WORKS}/10.1016/").mock(
+            return_value=httpx.Response(200, json=crossref_fixture("work_retracted"))
+        )
+        respx.get(url__startswith=WORKS).mock(
+            return_value=httpx.Response(404, json=crossref_fixture("not_found"))
+        )
+        async with client:
+            response = await client.post(
+                "/api/check",
+                content=paper_bytes,
+                headers={"content-type": "application/pdf"},
+            )
+        assert response.status_code == 200
+        payload = response.json()
+        assert len(payload["entries"]) == 6
+        retracted = next(e for e in payload["entries"] if e["key"] == "ref4")
+        assert retracted["status"] == "critical"
+
+    @respx.mock
+    async def test_the_pdf_supplies_its_own_crosscheck(
+        self, client: httpx.AsyncClient, paper_bytes: bytes, crossref_fixture: Loader
+    ) -> None:
+        """No .tex needed: the document is bibliography and manuscript both."""
+        respx.get(url__startswith=WORKS).mock(
+            return_value=httpx.Response(404, json=crossref_fixture("not_found"))
+        )
+        async with client:
+            response = await client.post(
+                "/api/check", content=paper_bytes, headers={"content-type": "application/pdf"}
+            )
+        crosscheck = response.json()["crosscheck"]
+        assert crosscheck is not None
+        assert crosscheck["manuscript"] == "the PDF body"
+
+    async def test_a_corrupt_pdf_is_a_clear_400(self, client: httpx.AsyncClient) -> None:
+        async with client:
+            response = await client.post(
+                "/api/check",
+                content=b"%PDF-1.4\nbut then nothing valid at all",
+                headers={"content-type": "application/pdf"},
+            )
+        assert response.status_code == 400
+        assert "PDF" in response.json()["error"]
+
+    async def test_an_oversized_upload_is_rejected(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        from bibcheck.web import MAX_PDF_BYTES
+
+        async with client:
+            response = await client.post(
+                "/api/check",
+                content=b"%PDF-" + b"0" * (MAX_PDF_BYTES + 1),
+                headers={"content-type": "application/pdf"},
+            )
+        assert response.status_code == 413
