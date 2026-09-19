@@ -220,14 +220,14 @@
     </div>
     <hr class="rule">
     <div class="tally">
-      <b class="ok">2 ok</b> &nbsp; <b class="warn">3 warn</b> &nbsp;
-      <b class="critical">2 critical</b> &nbsp; <b class="unresolved">1 unresolved</b> &nbsp;
-      <b class="neutral">1 error</b>
+      <b class="critical">2 critical</b> &nbsp; <b class="warn">3 warn</b> &nbsp;
+      <b class="unresolved">1 unresolved</b> &nbsp; <b class="neutral">1 error</b> &nbsp;
+      <b class="ok">2 ok</b>
     </div>
   </div>
   <p class="caption">
-    Color carries meaning and nothing else does — and it turns itself off when
-    output is not a terminal. Report layer lands in step 4.
+    Color carries meaning and nothing else does — and it turns itself off
+    automatically when output is not a terminal.
   </p>
 </section>
 
@@ -470,8 +470,8 @@
 
     const s = data.summary || {};
     const tally = [
-      ['ok', s.ok], ['warn', s.warn], ['critical', s.critical],
-      ['unresolved', s.unresolved], ['network_error', s.network_error],
+      ['critical', s.critical], ['warn', s.warn], ['unresolved', s.unresolved],
+      ['network_error', s.network_error], ['ok', s.ok],
     ].filter(([, n]) => n > 0)
      .map(([k, n]) => `<b class="${k}">${n} ${k.replace('_', ' ')}</b>`)
      .join(' &nbsp; ') || '<b class="f">nothing to report</b>';

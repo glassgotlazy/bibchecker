@@ -1,0 +1,67 @@
+# Check a paper's bibliography on every push, and on a schedule.
+#
+# Copy this to .github/workflows/bibcheck.yml in the repository holding your
+# paper. It fails the build only on CRITICAL findings -- a citation that does
+# not exist, or one that has been retracted -- so a cosmetic difference in a
+# venue name never blocks a commit.
+#
+# The scheduled run matters more than it looks: a paper that was clean in March
+# can pick up a retraction in June without anyone touching the repository.
+
+name: bibcheck
+
+on:
+  push:
+    paths: ["**/*.bib", "**/*.tex"]
+  pull_request:
+    paths: ["**/*.bib", "**/*.tex"]
+  schedule:
+    # Every Monday at 07:00 UTC, to catch newly retracted work.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bibcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install bibcheck
+        run: pip install git+https://github.com/glassgotlazy/bibchecker
+
+      # Crossref responses are cached on disk, so a re-run costs no requests
+      # and the job finishes in seconds. The key rotates weekly so the cache
+      # cannot go stale enough to hide a retraction.
+      - name: Restore the Crossref cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bibcheck
+          key: bibcheck-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: bibcheck-${{ runner.os }}-
+
+      - name: Check references
+        env:
+          # Moves requests into Crossref's polite pool. Optional, and not a
+          # secret -- it is only a contact address, so a plain value is fine.
+          BIBCHECK_EMAIL: ${{ vars.BIBCHECK_EMAIL || 'ci@example.org' }}
+        run: |
+          bibcheck paper/refs.bib \
+            --tex paper/main.tex \
+            --json bibcheck-report.json \
+            --fail-on critical
+
+      # Uploaded even when the step above fails, which is when it is wanted.
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bibcheck-report
+          path: bibcheck-report.json
+          if-no-files-found: ignore

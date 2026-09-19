@@ -17,14 +17,18 @@ bibcheck refs.bib --offline          # cache only, no network
 
 ## Status
 
-Under construction, built in order. **Steps 1-3 are complete**: the data model,
-BibTeX parsing and normalization; the Crossref client with its disk cache and
-rate limiting; and all six checks with the engine that runs them. 367 tests,
-`mypy --strict` clean.
+Feature-complete against the original brief: parsing and normalization, the
+Crossref client with its disk cache and rate limiting, all six checks, the
+terminal and JSON reports, `--fix`, the manuscript crosscheck, and a web
+version that runs the same checks in a browser. **431 tests**, `mypy --strict`
+clean, and the suite passes with no network access at all.
 
-There is also a **web version** — the same checks behind a small ASGI app, so
-a `.bib` can be dropped in a browser without installing anything. The terminal
-report, `--fix` and the CLI itself are next.
+One caveat worth stating plainly: the recorded Crossref fixtures were written
+against Crossref's documented schema rather than captured from live calls, so
+the response mapping in `crossref_parse.py` deserves one check against the real
+API — particularly which side of a retraction Crossref populates
+(`updated-by` on the article versus `update-to` on the notice). Both are
+handled; which one appears in practice is unverified.
 
 ## Checks
 
@@ -169,6 +173,90 @@ Parsing never raises. A syntax error, a duplicate key and a duplicate field are
 each reported as a distinct problem, and the last two still yield a usable entry
 — bibtexparser hands back the recovered block, so an author does not lose a
 reference to a typo. One broken entry costs one entry, not the run.
+
+## What a run looks like
+
+```
+  bibcheck  refs.bib  ·  4 entries · crossref · 0.4s
+
+  ✓  he2016resnet
+  ⚠  drifted2021     year bib 2021  crossref 2019
+                     defined in the bibliography but never cited
+  ✕  fabricated2021  DOI does not resolve  10.9999/jac.2021.99999
+  ✕  wakefield1998   this work has been RETRACTED  10.1016/s0140-6736(97)11096-0
+  ! unparseable entry (starting at '@article{broken2020,')
+
+  ✕  1 cited but missing from the .bib: ghost2020
+
+  2 critical   1 warn   1 ok
+```
+
+Colour carries meaning and nothing else does, and it turns itself off
+automatically when stdout is not a terminal — piping to a file or a CI log
+yields clean text with no flag needed.
+
+## Exit codes
+
+Findings alone never fail a build; `--fail-on` is opt-in.
+
+| Code | Meaning |
+|---|---|
+| `0` | ran successfully, and `--fail-on` was not triggered |
+| `1` | `--fail-on` was triggered |
+| `2` | usage error — no such file, a bad flag, or `--fix` refusing to clobber |
+
+`--fail-on` accepts `critical`, `warn`, `unresolved`, `error` or `any`, comma
+separated. `warn` includes critical; `critical` alone is the sensible default
+for CI.
+
+## `--fix`
+
+Corrections go to a **new** file, always:
+
+```sh
+bibcheck refs.bib --fix fixed.bib && diff refs.bib fixed.bib
+```
+
+```diff
+16c16
+<   year    = {2021},
+---
+>   year    = {2019},
+```
+
+That one-line diff is the whole design. Rather than re-emitting entries from
+the parsed model — which would reformat the file — corrections are applied as
+surgical replacements on the original text. Comments, indentation, `=`
+alignment, delimiter style, trailing commas and field order all come through
+untouched, because nothing deliberately changed is ever rewritten.
+
+What it will correct: `year`, `volume`, `pages`, and adding a missing `doi`
+when the title match is near-certain. What it will **not** touch:
+
+- **Title and author.** A flagged mismatch there may mean the entry is the
+  wrong work entirely — a judgement call, not a typo.
+- **Venue.** Rewriting `IEEE Trans. Pattern Anal.` to the spelled-out name
+  would undo a deliberate house style.
+- **Anything on a CRITICAL entry.** A retracted paper needs a decision about
+  whether to cite it at all; quietly correcting its page numbers would be
+  absurd.
+- **Anything resolved by a fuzzy title match** rather than by DOI.
+
+It refuses to write over its input, and refuses to clobber an existing file
+without `--force`.
+
+## Continuous integration
+
+A ready-to-copy workflow is in [`examples/bibcheck.yml`](examples/bibcheck.yml):
+
+```yaml
+- run: pip install git+https://github.com/glassgotlazy/bibchecker
+- run: bibcheck paper/refs.bib --tex paper/main.tex --fail-on critical
+```
+
+It caches Crossref responses between runs, so a re-run costs no requests, and
+it runs weekly on a schedule as well as on push — a bibliography that was clean
+in March can pick up a retraction in June without anyone touching the repo.
 
 ## The web version
 

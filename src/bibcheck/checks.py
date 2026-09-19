@@ -85,7 +85,7 @@ def check_existence(
             Problem(
                 code=Code.DOI_NOT_FOUND,
                 severity=Severity.CRITICAL,
-                message="DOI does not resolve against Crossref",
+                message="DOI does not resolve",
                 field="doi",
                 local=doi,
                 url=f"https://doi.org/{doi}",
