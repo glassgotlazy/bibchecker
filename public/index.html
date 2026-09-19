@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bibcheck</title>
+<meta name="description" content="Verify the integrity of every reference in a BibTeX file — before a reviewer does.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✓</text></svg>">
+<style>
+  :root {
+    --bg: #0b0c0e;
+    --panel: #101215;
+    --line: #1e2228;
+    --ink: #e8eaed;
+    --dim: #9aa1a9;
+    --faint: #666c74;
+    --ok: #6ee7a0;
+    --warn: #e3b341;
+    --critical: #ff7b72;
+    --unresolved: #79a6dc;
+    --neutral: #8b9198;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #fbfbfa; --panel: #ffffff; --line: #e7e5e1;
+      --ink: #14161a; --dim: #5a6069; --faint: #8b9198;
+      --ok: #1a7f4b; --warn: #9a6b00; --critical: #c0392b;
+      --unresolved: #2b6cb0; --neutral: #5a6069;
+      color-scheme: light;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.65 ui-sans-serif, -apple-system, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 0 16px; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
+
+  /* ---------- header ---------- */
+  header { padding: 88px 0 56px; }
+  .brand {
+    font-size: clamp(38px, 8vw, 56px); font-weight: 600; letter-spacing: -0.03em;
+    margin: 0 0 18px;
+  }
+  .brand .tick { color: var(--ok); }
+  .lede { font-size: clamp(18px, 3.4vw, 21px); line-height: 1.5; color: var(--dim); margin: 0 0 28px; max-width: 34em; }
+  .lede strong { color: var(--ink); font-weight: 600; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; }
+  .badge {
+    font-size: 12.5px; letter-spacing: .02em; color: var(--dim);
+    border: 1px solid var(--line); border-radius: 999px; padding: 4px 11px;
+  }
+
+  /* ---------- sections ---------- */
+  section { padding: 44px 0; border-top: 1px solid var(--line); }
+  h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .13em;
+    color: var(--faint); font-weight: 600; margin: 0 0 22px;
+  }
+  p { margin: 0 0 16px; color: var(--dim); max-width: 62ch; }
+  p strong { color: var(--ink); font-weight: 600; }
+  a { color: inherit; text-decoration-color: var(--faint); text-underline-offset: 3px; }
+  a:hover { text-decoration-color: currentColor; }
+
+  /* ---------- terminal ---------- */
+  .term {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 20px; overflow-x: auto; font-size: 13.5px; line-height: 1.9;
+  }
+  .term-head { color: var(--faint); margin-bottom: 14px; white-space: nowrap; }
+  .term-head b { color: var(--ink); font-weight: 600; }
+  .rows { display: grid; grid-template-columns: 1.2em max-content 1fr; gap: 0 14px; white-space: nowrap; }
+  .rows .g { text-align: center; }
+  .rows .k { color: var(--ink); }
+  .rows .d { color: var(--dim); }
+  .rows .sub { grid-column: 3; color: var(--dim); }
+  .rows .spacer { grid-column: 1 / -1; height: 4px; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); }
+  .critical { color: var(--critical); } .unresolved { color: var(--unresolved); }
+  .neutral { color: var(--neutral); }
+  .f { color: var(--faint); }
+  .rule { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
+  .tally { color: var(--dim); white-space: nowrap; }
+  .tally b { font-weight: 600; }
+  .caption { font-size: 13px; color: var(--faint); margin: 12px 0 0; }
+
+  /* ---------- command list ---------- */
+  .cmds { display: grid; gap: 2px; }
+  .cmd {
+    display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px;
+    padding: 11px 14px; border-radius: 8px; background: var(--panel);
+    border: 1px solid var(--line);
+  }
+  .cmd code { font-size: 13.5px; color: var(--ink); word-break: break-word; }
+  .cmd span { font-size: 13px; color: var(--dim); }
+  .cmd .prompt { color: var(--faint); }
+
+  /* ---------- table ---------- */
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 520px; }
+  th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 11.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--faint); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  td:first-child { color: var(--ink); white-space: nowrap; }
+  td .sev { font-size: 12px; letter-spacing: .04em; white-space: nowrap; }
+  td code { font-size: 12.5px; color: var(--dim); }
+
+  footer { padding: 40px 0 72px; border-top: 1px solid var(--line); color: var(--faint); font-size: 14px; }
+  footer a { color: var(--dim); }
+
+  @media (max-width: 560px) {
+    header { padding: 56px 0 40px; }
+    .term { padding: 14px; font-size: 12.5px; }
+    .rows { gap: 0 10px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1 class="brand"><span class="tick">✓</span> bibcheck</h1>
+  <p class="lede">
+    Verify the integrity of every reference in a BibTeX file —
+    <strong>before a reviewer does.</strong>
+  </p>
+  <div class="badges">
+    <span class="badge">Python 3.11+</span>
+    <span class="badge">No API key</span>
+    <span class="badge">Offline-capable</span>
+    <span class="badge">mypy --strict</span>
+    <span class="badge">273 tests</span>
+  </div>
+</header>
+
+<section>
+  <h2>The problem</h2>
+  <p>
+    LLM-assisted writing produces plausible-looking citations that do not exist,
+    carry the wrong year, name the wrong venue, or point at retracted work.
+    Checking forty references by hand is the bottleneck before submission —
+    and the one step everyone skips.
+  </p>
+  <p><strong>bibcheck automates it.</strong> Point it at your <code>.bib</code> and it tells you
+    which references are wrong, fabricated, or retracted.</p>
+</section>
+
+<section>
+  <h2>What a run looks like</h2>
+  <div class="term mono">
+    <div class="term-head">bibcheck <b>refs.bib</b> · 9 entries · crossref · 1.2s</div>
+    <div class="rows">
+      <span class="g ok">✓</span><span class="k">vaswani2017attention</span><span class="d"></span>
+      <span class="g ok">✓</span><span class="k">he2016resnet</span><span class="d"></span>
+
+      <span class="g warn">⚠</span><span class="k">accented2019</span><span class="d">year &nbsp;<span class="f">bib</span> 2019 &nbsp;<span class="f">crossref</span> 2020</span>
+      <span class="sub">pages <span class="f">bib</span> 1234–1256 &nbsp;<span class="f">crossref</span> 1234–1245</span>
+
+      <span class="g critical">✕</span><span class="k">fabricated2021</span><span class="d">DOI does not resolve &nbsp;<span class="f">10.9999/jac.2021.99999</span></span>
+
+      <span class="g critical">✕</span><span class="k">wakefield1998</span><span class="d">RETRACTED <span class="f">2010-02-02 · The Lancet</span></span>
+
+      <span class="g warn">⚠</span><span class="k">lewis2020longformer</span><span class="d">preprint superseded <span class="f">→ 10.18653/v1/2021.acl-1.1</span></span>
+
+      <span class="g warn">⚠</span><span class="k">dup_a</span><span class="d">same work as <span class="f">dup_b</span></span>
+
+      <span class="g unresolved">?</span><span class="k">noident2018</span><span class="d">no DOI; no confident match <span class="f">(best 0.61)</span></span>
+
+      <span class="g neutral">~</span><span class="k">slow2019</span><span class="d">network error <span class="f">· timeout after 20s</span></span>
+    </div>
+    <hr class="rule">
+    <div class="tally">
+      <b class="ok">2 ok</b> &nbsp; <b class="warn">3 warn</b> &nbsp;
+      <b class="critical">2 critical</b> &nbsp; <b class="unresolved">1 unresolved</b> &nbsp;
+      <b class="neutral">1 error</b>
+    </div>
+  </div>
+  <p class="caption">
+    Color carries meaning and nothing else does — and it turns itself off when
+    output is not a terminal. Report layer lands in step 4.
+  </p>
+</section>
+
+<section>
+  <h2>Usage</h2>
+  <div class="cmds">
+    <div class="cmd"><code><span class="prompt">$</span> bibcheck refs.bib</code><span>Human-readable report to stdout.</span></div>
+    <div class="cmd"><code><span class="prompt">$</span> bibcheck refs.bib --tex paper.tex</code><span>Also cross-check which keys are cited, and which <code>\cite</code> keys have no entry.</span></div>
+    <div class="cmd"><code><span class="prompt">$</span> bibcheck refs.bib --json report.json</code><span>Machine-readable output.</span></div>
+    <div class="cmd"><code><span class="prompt">$</span> bibcheck refs.bib --fix fixed.bib</code><span>Corrected metadata written to a <em>new</em> file. Keys and field order preserved; anything uncertain left untouched.</span></div>
+    <div class="cmd"><code><span class="prompt">$</span> bibcheck refs.bib --fail-on critical</code><span>Nonzero exit for CI.</span></div>
+    <div class="cmd"><code><span class="prompt">$</span> bibcheck refs.bib --offline</code><span>Cache only, no network.</span></div>
+  </div>
+</section>
+
+<section>
+  <h2>Every check</h2>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Check</th><th>Detects</th><th>Severity</th></tr></thead>
+      <tbody>
+        <tr><td>Existence</td><td>A DOI that does not resolve against Crossref — the fabricated-citation signal. <code>doi_not_found</code></td><td><span class="sev critical">CRITICAL</span></td></tr>
+        <tr><td>Resolution</td><td>No DOI: resolved by title + first author + year, with the match confidence shown. <code>low_confidence_match</code></td><td><span class="sev unresolved">UNRESOLVED</span></td></tr>
+        <tr><td>Metadata drift</td><td>Title, authors, year, venue, volume or pages disagreeing with the authoritative record, both values shown. <code>*_mismatch</code></td><td><span class="sev warn">WARN</span></td></tr>
+        <tr><td>Retraction</td><td>Retracted, withdrawn, or subject to an expression of concern. <code>retracted</code></td><td><span class="sev critical">CRITICAL</span></td></tr>
+        <tr><td>Preprint superseded</td><td>An arXiv preprint since published in a venue, so the citation can be upgraded. <code>preprint_superseded</code></td><td><span class="sev warn">WARN</span></td></tr>
+        <tr><td>Duplicates</td><td>The same work cited under two different keys. <code>duplicate_work</code></td><td><span class="sev warn">WARN</span></td></tr>
+        <tr><td>Uncited / undefined</td><td>Entries never cited by the manuscript, and <code>\cite</code> keys with no entry. <code>undefined_citation</code></td><td><span class="sev critical">CRITICAL</span></td></tr>
+        <tr><td>Structure</td><td>Malformed entries, duplicate keys, DOI fields that are not DOIs. <code>malformed_entry</code></td><td><span class="sev warn">WARN</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>How it behaves</h2>
+  <p>
+    <strong>Nothing crashes the run.</strong> A timeout, a 500, an unparseable entry —
+    each degrades to a status on <em>one</em> reference. Thirty-nine good references
+    are never lost to one bad one.
+  </p>
+  <p>
+    <strong>Cosmetic differences are not findings.</strong> Titles are compared through a
+    normalized key: LaTeX accents, protective braces, punctuation, case and
+    "&amp;" versus "and" all collapse before anything is flagged. <code>Caf\'{e}</code>
+    and <code>Café</code> are the same title.
+  </p>
+  <p>
+    <strong>"We didn't check" is never reported as "it's fine."</strong> A DOI that failed to
+    resolve, a lookup that timed out, and a work the registry has never heard of
+    are three different outcomes, and the report keeps them apart.
+  </p>
+  <p>
+    <strong>Every response is cached on disk</strong>, including the 404s — so re-runs are
+    instant and <code>--offline</code> genuinely works.
+  </p>
+</section>
+
+<section>
+  <h2>Install</h2>
+  <div class="cmds">
+    <div class="cmd"><code><span class="prompt">$</span> git clone https://github.com/glassgotlazy/bibchecker</code><span></span></div>
+    <div class="cmd"><code><span class="prompt">$</span> pip install -e ".[dev]"</code><span>Python 3.11+. No API key required on the default path.</span></div>
+  </div>
+  <p style="margin-top:22px">
+    Setting a contact email moves requests into Crossref's polite pool — faster
+    and better-behaved, but entirely optional:
+  </p>
+  <div class="cmds">
+    <div class="cmd"><code><span class="prompt">$</span> export BIBCHECK_EMAIL=you@university.edu</code><span>Optional. Never sent anywhere but Crossref, as a courtesy identifier.</span></div>
+  </div>
+</section>
+
+<footer>
+  <p style="margin:0">
+    In development, built in order — data model and parsing, then the Crossref
+    client, then the checks, then reporting.
+    <a href="https://github.com/glassgotlazy/bibchecker">Source on GitHub →</a>
+  </p>
+</footer>
+
+</div>
+</body>
+</html>
