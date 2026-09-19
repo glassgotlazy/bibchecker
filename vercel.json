@@ -1,8 +1,0 @@
-{
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": null,
-  "installCommand": "echo 'bibcheck is a CLI; nothing to install for the static site'",
-  "buildCommand": "echo 'static site; nothing to build'",
-  "outputDirectory": "public",
-  "cleanUrls": true
-}

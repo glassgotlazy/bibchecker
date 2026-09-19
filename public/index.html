@@ -111,6 +111,50 @@
   td .sev { font-size: 12px; letter-spacing: .04em; white-space: nowrap; }
   td code { font-size: 12.5px; color: var(--dim); }
 
+
+  /* ---------- upload ---------- */
+  .drop {
+    border: 1px dashed var(--line); border-radius: 12px; background: var(--panel);
+    padding: 30px 22px; text-align: center; transition: border-color .15s, background .15s;
+  }
+  .drop.over { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 7%, var(--panel)); }
+  .drop h3 { margin: 0 0 6px; font-size: 17px; font-weight: 600; }
+  .drop p { margin: 0 auto; font-size: 14px; max-width: 42ch; }
+  .drop .files { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .chip {
+    font-size: 13px; border: 1px solid var(--line); border-radius: 999px;
+    padding: 5px 12px; color: var(--dim); background: var(--bg);
+  }
+  .chip b { color: var(--ink); font-weight: 600; }
+  .chip button {
+    background: none; border: 0; color: var(--faint); cursor: pointer;
+    font-size: 15px; line-height: 1; padding: 0 0 0 7px;
+  }
+  .chip button:hover { color: var(--critical); }
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 18px; }
+  button.primary, label.pick {
+    font: inherit; font-size: 14.5px; font-weight: 600; cursor: pointer;
+    border-radius: 8px; padding: 9px 20px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--ink);
+  }
+  button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  button.primary:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary:not(:disabled):hover, label.pick:hover { opacity: .88; }
+  .hint { font-size: 13px; color: var(--faint); margin-top: 14px; text-align: center; }
+  .hint a { color: var(--dim); cursor: pointer; }
+  #result { margin-top: 26px; }
+  .msg {
+    border: 1px solid var(--line); border-left: 2px solid var(--critical);
+    border-radius: 8px; padding: 13px 16px; font-size: 14px; color: var(--dim);
+  }
+  .spin { display: inline-block; animation: sp 1s linear infinite; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+  .visually-hidden {
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap;
+  }
+
   footer { padding: 40px 0 72px; border-top: 1px solid var(--line); color: var(--faint); font-size: 14px; }
   footer a { color: var(--dim); }
 
@@ -185,6 +229,32 @@
     Color carries meaning and nothing else does — and it turns itself off when
     output is not a terminal. Report layer lands in step 4.
   </p>
+</section>
+
+<section id="try">
+  <h2>Try it</h2>
+  <p>
+    Drop a <code>.bib</code> here and it is checked against Crossref in the
+    browser — nothing is stored, and the file never leaves the request.
+    Add a <code>.tex</code> to also find uncited entries and undefined keys.
+  </p>
+
+  <div class="drop" id="drop">
+    <h3>Drop your <code>.bib</code> here</h3>
+    <p>or choose a file — up to 200 entries</p>
+    <div class="files" id="files" hidden></div>
+    <div class="actions">
+      <label class="pick" for="picker">Choose files
+        <input id="picker" class="visually-hidden" type="file"
+               accept=".bib,.tex,.md,text/plain" multiple>
+      </label>
+      <button class="primary" id="run" disabled>Check references</button>
+    </div>
+    <p class="hint">No account, no upload limit beyond file size — or
+      <a id="sample">try it with a sample bibliography</a>.</p>
+  </div>
+
+  <div id="result" aria-live="polite"></div>
 </section>
 
 <section>
@@ -266,5 +336,184 @@
 </footer>
 
 </div>
+
+<script>
+(() => {
+  const drop = document.getElementById('drop');
+  const picker = document.getElementById('picker');
+  const runBtn = document.getElementById('run');
+  const filesEl = document.getElementById('files');
+  const result = document.getElementById('result');
+  const sampleLink = document.getElementById('sample');
+
+  const GLYPH = { ok: '\u2713', warn: '\u26a0', critical: '\u2715',
+                  unresolved: '?', network_error: '~' };
+  const state = { bib: null, tex: null };
+
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
+    (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+  function renderChips() {
+    filesEl.innerHTML = '';
+    for (const kind of ['bib', 'tex']) {
+      const f = state[kind];
+      if (!f) continue;
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.innerHTML = `<b>${esc(f.name)}</b> <span>${(f.size/1024).toFixed(1)} KB</span>`;
+      const x = document.createElement('button');
+      x.type = 'button';
+      x.setAttribute('aria-label', `Remove ${f.name}`);
+      x.textContent = '\u00d7';
+      x.onclick = () => { state[kind] = null; renderChips(); };
+      chip.appendChild(x);
+      filesEl.appendChild(chip);
+    }
+    filesEl.hidden = !state.bib && !state.tex;
+    runBtn.disabled = !state.bib;
+  }
+
+  function accept(fileList) {
+    for (const file of fileList) {
+      const lower = file.name.toLowerCase();
+      if (lower.endsWith('.bib')) state.bib = file;
+      else if (lower.endsWith('.tex') || lower.endsWith('.md')) state.tex = file;
+      else if (!state.bib) state.bib = file;
+    }
+    renderChips();
+  }
+
+  picker.addEventListener('change', (e) => accept(e.target.files));
+  ['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, (e) => {
+    e.preventDefault(); drop.classList.add('over');
+  }));
+  ['dragleave','drop'].forEach(ev => drop.addEventListener(ev, (e) => {
+    e.preventDefault();
+    if (ev === 'dragleave' && drop.contains(e.relatedTarget)) return;
+    drop.classList.remove('over');
+  }));
+  drop.addEventListener('drop', (e) => {
+    if (e.dataTransfer?.files?.length) accept(e.dataTransfer.files);
+  });
+
+  sampleLink.addEventListener('click', () => {
+    const sample = `@inproceedings{he2016resnet,
+  title     = {Deep Residual Learning for Image Recognition},
+  author    = {He, Kaiming and Zhang, Xiangyu and Ren, Shaoqing and Sun, Jian},
+  booktitle = {CVPR},
+  pages     = {770--778},
+  year      = {2016},
+  doi       = {10.1109/CVPR.2016.90}
+}
+
+@article{fabricated2021,
+  title   = {Quantum Neural Architectures for Sentiment Analysis},
+  author  = {Doe, Jane and Roe, Richard},
+  journal = {Journal of Advanced Computing},
+  year    = {2021},
+  doi     = {10.9999/jac.2021.99999}
+}
+
+@article{wakefield1998,
+  title   = {Ileal-lymphoid-nodular hyperplasia and developmental disorder},
+  author  = {Wakefield, A J},
+  journal = {The Lancet},
+  year    = {1998},
+  doi     = {10.1016/S0140-6736(97)11096-0}
+}`;
+    state.bib = new File([sample], 'sample.bib', { type: 'text/plain' });
+    state.tex = null;
+    renderChips();
+    check();
+  });
+
+  runBtn.addEventListener('click', check);
+
+  async function check() {
+    if (!state.bib) return;
+    runBtn.disabled = true;
+    result.innerHTML = `<div class="term mono"><span class="spin">\u25e0</span>
+      &nbsp;checking ${esc(state.bib.name)}\u2026</div>`;
+    try {
+      const body = { bib: await state.bib.text() };
+      if (state.tex) body.tex = await state.tex.text();
+      const res = await fetch('/api/check', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) { showError(data.error || `request failed (${res.status})`); return; }
+      render(data);
+    } catch (err) {
+      showError(err.message || 'the request failed');
+    } finally {
+      runBtn.disabled = !state.bib;
+    }
+  }
+
+  function showError(message) {
+    result.innerHTML = `<div class="msg">${esc(message)}</div>`;
+  }
+
+  function render(data) {
+    const entries = data.entries || [];
+    const rows = entries.map((e) => {
+      const st = e.status;
+      const problems = e.problems || [];
+      const head = problems.length ? detail(problems[0]) : '';
+      const rest = problems.slice(1).map(
+        (p) => `<span class="sub">${detail(p)}</span>`).join('');
+      return `<span class="g ${st}">${GLYPH[st] || '\u00b7'}</span>` +
+             `<span class="k">${esc(e.key)}</span><span class="d">${head}</span>${rest}`;
+    }).join('');
+
+    const s = data.summary || {};
+    const tally = [
+      ['ok', s.ok], ['warn', s.warn], ['critical', s.critical],
+      ['unresolved', s.unresolved], ['network_error', s.network_error],
+    ].filter(([, n]) => n > 0)
+     .map(([k, n]) => `<b class="${k}">${n} ${k.replace('_', ' ')}</b>`)
+     .join(' &nbsp; ') || '<b class="f">nothing to report</b>';
+
+    const parse = (data.parse_problems || []).map(
+      (p) => `<span class="sub warn">${esc(p.message)}</span>`).join('');
+
+    const cc = data.crosscheck;
+    let extra = '';
+    if (cc && cc.undefined && cc.undefined.length) {
+      extra += `<div class="tally" style="margin-top:10px"><span class="critical">` +
+               `${cc.undefined.length} undefined \u2014 cited but not in the .bib:</span> ` +
+               `<span class="f">${esc(cc.undefined.join(', '))}</span></div>`;
+    }
+    if (data.notice) {
+      extra += `<div class="tally" style="margin-top:10px"><span class="warn">` +
+               `${esc(data.notice)}</span></div>`;
+    }
+
+    result.innerHTML =
+      `<div class="term mono">
+         <div class="term-head">bibcheck <b>${esc(state.bib.name)}</b> \u00b7 ` +
+           `${entries.length} entries \u00b7 crossref</div>
+         <div class="rows">${rows}${parse}</div>
+         <hr class="rule">
+         <div class="tally">${tally}</div>
+         ${extra}
+       </div>`;
+  }
+
+  function detail(p) {
+    const bits = [];
+    if (p.field && p.local != null && p.authoritative != null) {
+      bits.push(`${esc(p.field)} <span class="f">bib</span> ${esc(p.local)}` +
+                ` &nbsp;<span class="f">crossref</span> ${esc(p.authoritative)}`);
+    } else {
+      bits.push(esc(p.message));
+      if (p.local) bits.push(`<span class="f">${esc(p.local)}</span>`);
+    }
+    return bits.join(' ');
+  }
+})();
+</script>
 </body>
 </html>

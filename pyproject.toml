@@ -44,10 +44,13 @@ where = ["src"]
 [tool.setuptools.package-data]
 bibcheck = ["py.typed"]
 
+[tool.vercel]
+entrypoint = "app:app"
+
 [tool.mypy]
 python_version = "3.11"
 strict = true
-files = ["src", "tests"]
+files = ["src", "tests", "app.py"]
 warn_unreachable = true
 
 [[tool.mypy.overrides]]

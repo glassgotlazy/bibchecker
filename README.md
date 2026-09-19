@@ -17,10 +17,14 @@ bibcheck refs.bib --offline          # cache only, no network
 
 ## Status
 
-Under construction, built in order. **Steps 1 and 2 are complete**: the data
-model, BibTeX parsing and normalization; and the Crossref client with its disk
-cache and rate limiting. 273 tests, `mypy --strict` clean. The six checks, the
-reporting layer and `--fix` are next.
+Under construction, built in order. **Steps 1-3 are complete**: the data model,
+BibTeX parsing and normalization; the Crossref client with its disk cache and
+rate limiting; and all six checks with the engine that runs them. 367 tests,
+`mypy --strict` clean.
+
+There is also a **web version** — the same checks behind a small ASGI app, so
+a `.bib` can be dropped in a browser without installing anything. The terminal
+report, `--fix` and the CLI itself are next.
 
 ## Checks
 
@@ -134,12 +138,61 @@ like this lies to its user:
 Only the first is a finding about the *citation*. The other two are findings
 about the *run*, and are reported as such.
 
+### The checks
+
+Every rule in `checks.py` is a **pure function**: local metadata and an
+authoritative record in, a tuple of `Problem` out. No HTTP, no state, no
+ordering dependency between rules. Each can be exercised directly with
+hand-built inputs, and a new rule cannot break an existing one. `engine.py`
+does the orchestration and owns the one hard guarantee: an exception anywhere
+in one entry costs *that entry* and nothing else — `asyncio.gather` runs with
+`return_exceptions=True`, so even a bug in bibcheck itself degrades to a
+`NETWORK_ERROR` on a single reference rather than a traceback.
+
+Three judgment calls worth stating, because they are the difference between a
+tool people use and one they mute:
+
+- **A DOI that does not resolve is CRITICAL; an entry with no identifier that
+  cannot be matched is only a WARN.** Plenty of real work is absent from
+  Crossref. Treating "not found" as "fabricated" would cry wolf on every thesis
+  and technical report.
+- **Venue drift caps at WARN and drops to INFO when either side looks
+  abbreviated.** `IEEE Trans. Pattern Anal. Mach. Intell.` versus the
+  spelled-out name is house style, not an error.
+- **A shared title alone is not a duplicate.** A conference paper and its
+  extended journal version legitimately share a title; the year is part of the
+  identity signature.
+
 ### Failure handling
 
 Parsing never raises. A syntax error, a duplicate key and a duplicate field are
 each reported as a distinct problem, and the last two still yield a usable entry
 — bibtexparser hands back the recovered block, so an author does not lose a
 reference to a typo. One broken entry costs one entry, not the run.
+
+## The web version
+
+The same checks, behind a small ASGI app in `web.py` — no web framework, so
+the CLI never grows a dependency it does not need. The Python package is the
+single source of truth, so the site cannot drift from the tool.
+
+```sh
+pip install -e ".[dev]" uvicorn
+uvicorn app:app --reload        # then open http://127.0.0.1:8000
+```
+
+`POST /api/check` takes either a JSON envelope or a raw `.bib` body:
+
+```sh
+curl -X POST localhost:8000/api/check --data-binary @refs.bib
+curl -X POST localhost:8000/api/check -H 'content-type: application/json' \
+     -d '{"bib": "@article{...}", "tex": "\\cite{key}"}'
+```
+
+Serverless has no persistent disk and a hard execution deadline, so the cache
+lives under `/tmp` and the work is bounded: body size, entry count and wall
+clock are all capped up front, and exceeding a cap returns an explanation
+rather than a platform timeout page.
 
 ## Install
 
