@@ -44,6 +44,16 @@ FIXABLE_FIELDS: Final[dict[Code, str]] = {
 #: leaving the entry alone.
 DOI_ADD_THRESHOLD: Final[float] = 0.95
 
+#: Purely local corrections, applied to any entry regardless of whether it
+#: resolved. These change *presentation* and never meaning -- brace protection
+#: adds braces around text already there, and a backwards page range has one
+#: correct reading -- so none of them prejudges a decision the author still has
+#: to make about a CRITICAL entry.
+LOCAL_FIXES: Final[dict[Code, str]] = {
+    Code.CASE_PROTECTION: "title",
+    Code.SUSPECT_PAGES: "pages",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class Fix:
@@ -75,24 +85,49 @@ def plan_fixes(report: Report) -> list[Fix]:
 
 
 def _fixes_for(entry: EntryReport) -> list[Fix]:
+    """Plan this entry's corrections, at most one per field.
+
+    Two rules can legitimately target the same field -- a backwards page range
+    is both locally wrong and different from the record. The registry wins,
+    because it knows the true value rather than merely a self-consistent one.
+    """
+    by_field: dict[str, Fix] = {}
+
+    # Local formatting fixes first: they need no lookup and apply even to an
+    # entry the author may end up deleting.
+    for problem in entry.problems:
+        field = LOCAL_FIXES.get(problem.code)
+        if (
+            field is not None
+            and problem.severity is not Severity.INFO
+            and problem.authoritative
+        ):
+            by_field[field] = Fix(
+                key=entry.key,
+                field=field,
+                old=problem.local,
+                new=_normalise(field, problem.authoritative),
+            )
+
     record = entry.record
     if record is None or not entry.resolved:
-        return []
+        return list(by_field.values())
     if entry.status is Status.CRITICAL:
-        return []
+        return list(by_field.values())
     if any(problem.severity is Severity.CRITICAL for problem in entry.problems):
-        return []
+        return list(by_field.values())
 
-    fixes: list[Fix] = []
-    resolved_by_doi = record.match_confidence >= 1.0
-
-    if resolved_by_doi:
+    if record.match_confidence >= 1.0:
         for problem in entry.problems:
             field = FIXABLE_FIELDS.get(problem.code)
             if field is None or problem.authoritative is None:
                 continue
-            fixes.append(
-                Fix(key=entry.key, field=field, old=problem.local, new=problem.authoritative)
+            # Overwrites any local fix for the same field, by design.
+            by_field[field] = Fix(
+                key=entry.key,
+                field=field,
+                old=problem.local,
+                new=_normalise(field, problem.authoritative),
             )
 
     # Adding a DOI the entry lacks is the one insertion worth making, and only
@@ -104,10 +139,22 @@ def _fixes_for(entry: EntryReport) -> list[Fix]:
         and record.metadata.doi
         and record.match_confidence >= DOI_ADD_THRESHOLD
     ):
-        fixes.append(
-            Fix(key=entry.key, field="doi", old=None, new=record.metadata.doi, added=True)
+        by_field["doi"] = Fix(
+            key=entry.key, field="doi", old=None, new=record.metadata.doi, added=True
         )
-    return fixes
+    return list(by_field.values())
+
+
+def _normalise(field: str, value: str) -> str:
+    """Write a value the way BibTeX expects it.
+
+    Page ranges are the only case that matters: a report shows ``770-778``
+    because that reads naturally, but BibTeX wants an en-dash written ``--``,
+    and writing a single hyphen into the file would be a silent downgrade.
+    """
+    if field == "pages":
+        return re.sub(r"\s*-{1,3}\s*", "--", value.strip())
+    return value
 
 
 def apply_fixes(source: str, parsed: ParsedBib, fixes: Sequence[Fix]) -> tuple[str, list[Fix]]:

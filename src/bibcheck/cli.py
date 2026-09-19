@@ -25,7 +25,11 @@ from .pdf import (
     find_reference_section,
     references_to_bib,
 )
-from .report import make_console, render_human, render_json
+from .keys import suggest_key
+from .lookup import cite
+from .report import make_console, render_human, render_json, render_stats
+from .stats import summarise
+from .style import STYLES
 from rich.console import Console
 
 __all__ = ["main", "build_parser"]
@@ -58,7 +62,12 @@ def build_parser() -> argparse.ArgumentParser:
             "  bibcheck refs.bib --json report.json\n"
             "  bibcheck refs.bib --fix fixed.bib\n"
             "  bibcheck refs.bib --fail-on critical\n"
+            "  bibcheck refs.bib --stats --self-author He\n"
             "  bibcheck refs.bib --offline\n"
+            "\n"
+            "  bibcheck cite 10.1109/CVPR.2016.90\n"
+            "  bibcheck cite arXiv:1706.03762\n"
+            "  bibcheck cite \"attention is all you need\"\n"
         ),
     )
     parser.add_argument(
@@ -105,6 +114,28 @@ def build_parser() -> argparse.ArgumentParser:
             + ", ".join(sorted(_FAIL_ON))
             + " (comma-separated)"
         ),
+    )
+    parser.add_argument(
+        "--style",
+        metavar="NAME",
+        default="ieee",
+        help="citation style to check formatting against: " + ", ".join(sorted(STYLES)),
+    )
+    parser.add_argument(
+        "--no-style",
+        action="store_true",
+        help="skip the local style and formatting checks",
+    )
+    parser.add_argument(
+        "--stats",
+        action="store_true",
+        help="also print bibliography health metrics (age, preprints, venues)",
+    )
+    parser.add_argument(
+        "--self-author",
+        action="append",
+        metavar="SURNAME",
+        help="count references by this author as self-citations (repeatable)",
     )
     parser.add_argument(
         "--offline", action="store_true", help="use only the cache; make no network requests"
@@ -156,9 +187,58 @@ def _build_config(args: argparse.Namespace) -> Config:
     )
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = build_parser()
+def _run_cite(argv: Sequence[str]) -> int:
+    """``bibcheck cite <doi|arxiv|title>`` -- fetch one entry and print it."""
+    parser = argparse.ArgumentParser(
+        prog="bibcheck cite",
+        description="Look up a work and print a ready-to-paste BibTeX entry.",
+    )
+    parser.add_argument("query", nargs="+", help="a DOI, an arXiv id, or a title")
+    parser.add_argument("--key", help="use this citation key instead of a generated one")
+    parser.add_argument("--email", metavar="ADDRESS", help="contact email for Crossref")
+    parser.add_argument("--offline", action="store_true", help="use only the cache")
+    parser.add_argument("--cache-dir", type=Path, metavar="PATH")
+    parser.add_argument("--no-color", action="store_true")
     args = parser.parse_args(argv)
+
+    errors = make_console(file=sys.stderr, color=False if args.no_color else None)
+    config = load_config(
+        contact_email=args.email,
+        cache_dir=args.cache_dir,
+        offline=args.offline or None,
+    )
+
+    query = " ".join(args.query)
+    result = asyncio.run(cite(query, config, key=args.key))
+
+    if not result.found:
+        errors.print(
+            f"[red]not found:[/red] {result.detail or 'no match for that query'}"
+        )
+        return EXIT_FAILED
+
+    record = result.record
+    assert record is not None
+    if record.match_confidence < 1.0:
+        # A title search can land on the wrong paper, and pasting the wrong
+        # entry is worse than pasting none.
+        errors.print(
+            f"matched by title with confidence {record.match_confidence:.2f} — "
+            "check this is the work you meant",
+        )
+    print(result.bibtex)
+    return EXIT_OK
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    # A subcommand rather than a file. Kept out of argparse subparsers so that
+    # the original `bibcheck refs.bib` form stays exactly as it was.
+    if arguments and arguments[0] == "cite":
+        return _run_cite(arguments[1:])
+
+    parser = build_parser()
+    args = parser.parse_args(arguments)
 
     # bibtexparser logs syntax errors to stderr itself; we report them as
     # problems instead, so silence the duplicate.
@@ -184,6 +264,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         errors.print(f"[red]error:[/red] {error}")
         return EXIT_USAGE
 
+    if args.style not in STYLES:
+        errors.print(
+            f"[red]error:[/red] unknown style {args.style!r}; "
+            f"choose from {', '.join(sorted(STYLES))}"
+        )
+        return EXIT_USAGE
+
     if not args.bibfile.is_file():
         errors.print(f"[red]error:[/red] no such file: {args.bibfile}")
         return EXIT_USAGE
@@ -197,7 +284,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     report = asyncio.run(
         check_bibliography(
-            parsed, config, manuscript_path=args.tex, crosscheck=crosscheck
+            parsed,
+            config,
+            manuscript_path=args.tex,
+            crosscheck=crosscheck,
+            style=None if args.no_style else args.style,
         )
     )
     elapsed = time.monotonic() - started
@@ -209,6 +300,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         errors if json_to_stdout else make_console(color=_resolve_color(args))
     )
     render_human(report, console, elapsed=elapsed, show_ok=not args.quiet)
+
+    if args.stats:
+        render_stats(
+            summarise(
+                [entry.metadata for entry in report.entries if entry.metadata],
+                self_authors=args.self_author or (),
+            ),
+            console,
+        )
 
     if args.json is not None:
         _write_json(report, args.json)

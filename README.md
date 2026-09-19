@@ -14,17 +14,18 @@ bibcheck refs.bib --tex paper.tex      # also cross-check cited/uncited keys
 bibcheck refs.bib --json report.json   # machine-readable
 bibcheck refs.bib --fix fixed.bib      # corrected metadata, written to a NEW file
 bibcheck refs.bib --fail-on critical   # nonzero exit for CI
+bibcheck refs.bib --stats              # bibliography health metrics
 bibcheck refs.bib --offline            # cache only, no network
+
+bibcheck cite 10.1109/CVPR.2016.90     # fetch one entry, ready to paste
+bibcheck cite "attention is all you need"
 ```
 
 ## Status
 
-Feature-complete against the original brief, plus PDF input: parsing and
-normalization, the Crossref client with its disk cache and rate limiting, all
-six checks, the terminal and JSON reports, `--fix`, the manuscript crosscheck,
-reading references straight out of a paper PDF, and a web version that runs
-the same checks in a browser. **490 tests**, `mypy --strict` clean, and the
-suite passes with no network access at all.
+Feature-complete against the original brief, plus PDF input, style checks,
+bibliography metrics and a lookup command. **574 tests**, `mypy --strict`
+clean, and the suite passes with no network access at all.
 
 One caveat worth stating plainly: the recorded Crossref fixtures were written
 against Crossref's documented schema rather than captured from live calls, so
@@ -255,6 +256,101 @@ rather than pretending otherwise:
 Numbered styles (`[1]`, `1.`) split most reliably; author-year styles fall back
 to blank-line separation. A scanned PDF with no text layer is reported as
 needing OCR rather than returning nothing.
+
+## Style and formatting checks
+
+These run locally, need no network, and catch the class of problem a lookup
+never will: a reference can be entirely factually correct and still render
+badly or read inconsistently.
+
+| Check | Catches |
+|---|---|
+| Case protection | `title = {BERT: ...}` → IEEEtran typesets "Bert". Acronyms and internal capitals that a style file will flatten, with the braced fix. |
+| Style fields | Fields the chosen style requires (`--style ieee`, `acm`) and ones it merely expects. |
+| Page sanity | A range running backwards, or an implausible span. |
+| Inconsistent venue | `IEEE Trans. Pattern Anal.` in one entry and the spelled-out name in another. |
+| Inconsistent author | The same person as `K. He` in one entry and `Kaiming He` in another. |
+| URL hygiene | A URL-only citation with no access date. |
+
+**Case protection is the one that earns its keep.** A bare acronym in a title
+resolves perfectly against Crossref, drifts from nothing, and passes every
+other check — and then the style file lower-cases it, and the author finds out
+at proof stage. Nothing else in the pipeline will ever tell them.
+
+```
+⚠  devlin2019   BERT will be lower-cased by most style files; wrap each in
+                braces to protect it   fix {BERT}: Pre-training of Transformers
+```
+
+Note the label: local suggestions are shown under **`fix`**, never under
+`crossref`. A value bibcheck proposed and a value a registry stated are
+different kinds of claim, and the report never blurs them.
+
+`--fix` applies these, and unlike registry corrections it applies them to *any*
+entry — brace protection adds braces around text already there and a backwards
+range has only one reading, so neither prejudges a decision the author still
+has to make about a CRITICAL entry.
+
+Turn them off with `--no-style`.
+
+## Bibliography metrics
+
+```sh
+bibcheck refs.bib --stats --self-author He
+```
+
+```
+  bibliography
+
+      references  40
+      with a DOI  31  (78%)
+           years  1998–2024   median 2019
+  older than 10y  6  (15%)
+       preprints  14  (35%)
+  self-citations  9  (23%)
+
+      top venues
+                   6  IEEE Transactions on Pattern Analysis and Machine…
+                   4  Advances in Neural Information Processing Systems
+
+  · 14 of 40 references are preprints (35%); check whether any have since
+    been published
+```
+
+Not errors — *shape*. A reference list can be entirely correct and still draw a
+reviewer's comment: thirty preprints out of forty, or a median year of 2011 in
+a fast-moving field. These are the numbers a reader forms an impression from,
+and the author almost never counts them. The notes at the bottom are
+deliberately rare: a note that fires on every bibliography would be ignored on
+every bibliography.
+
+## `bibcheck cite`
+
+The writing-time companion. Mid-paragraph you have a DOI, an arXiv id, or just
+a remembered title, and you want the entry now:
+
+```sh
+bibcheck cite 10.1109/CVPR.2016.90 >> refs.bib
+bibcheck cite "attention is all you need"
+bibcheck cite arXiv:2004.05150
+```
+
+```bibtex
+@inproceedings{he2016residual,
+  title     = {Deep Residual Learning for Image Recognition},
+  author    = {He, Kaiming and Zhang, Xiangyu and Ren, Shaoqing and Sun, Jian},
+  booktitle = {2016 IEEE Conference on Computer Vision and Pattern Recognition (CVPR)},
+  pages     = {770--778},
+  year      = {2016},
+  doi       = {10.1109/cvpr.2016.90}
+}
+```
+
+Only BibTeX goes to stdout, so `>> refs.bib` appends something valid. A
+title-matched result prints its confidence to *stderr* — pasting the wrong
+entry is worse than pasting none. Keys follow the usual `surnameYEARword`
+convention, skipping words like "deep" and "learning" that identify nothing;
+`--key` overrides.
 
 ## Exit codes
 

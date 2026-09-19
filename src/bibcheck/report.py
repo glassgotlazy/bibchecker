@@ -18,9 +18,17 @@ from typing import Final, Iterable, TextIO
 from rich.console import Console
 from rich.text import Text
 
-from .models import Report, Severity, Status
+from .models import Code, Problem, Report, Severity, Status
+from .stats import OLD_REFERENCE_YEARS, Stats
 
-__all__ = ["render_human", "render_json", "make_console", "STATUS_GLYPH", "STATUS_STYLE"]
+__all__ = [
+    "render_human",
+    "render_json",
+    "render_stats",
+    "make_console",
+    "STATUS_GLYPH",
+    "STATUS_STYLE",
+]
 
 #: One character per status. Deliberately ASCII-adjacent so they survive a
 #: terminal without good Unicode coverage and a CI log viewer.
@@ -79,17 +87,36 @@ def make_console(
     )
 
 
-def _problem_text(problem: object) -> Text:
+#: Findings where the second value genuinely comes from the registry. Only
+#: these may be labelled "crossref" -- a local suggestion shown under that
+#: label would be a straight-up lie about where it came from.
+_DRIFT_CODES: Final[frozenset[Code]] = frozenset(
+    {
+        Code.TITLE_MISMATCH,
+        Code.AUTHOR_MISMATCH,
+        Code.YEAR_MISMATCH,
+        Code.VENUE_MISMATCH,
+        Code.VOLUME_MISMATCH,
+        Code.PAGES_MISMATCH,
+    }
+)
+
+
+def _problem_text(problem: Problem) -> Text:
     """One problem, rendered as a single line.
 
     A drift finding shows both values side by side -- the whole point is that
-    the author can see what differs without opening a browser.
+    the author can see what differs without opening a browser. A *local*
+    finding shows its suggestion under "fix", because that value is bibcheck's
+    own proposal rather than something a registry said.
     """
-    from .models import Problem
-
-    assert isinstance(problem, Problem)
     text = Text()
-    if problem.field and problem.local is not None and problem.authoritative is not None:
+    if (
+        problem.code in _DRIFT_CODES
+        and problem.field
+        and problem.local is not None
+        and problem.authoritative is not None
+    ):
         text.append(f"{problem.field} ", style="default")
         text.append("bib ", style="dim")
         text.append(problem.local)
@@ -98,10 +125,11 @@ def _problem_text(problem: object) -> Text:
         return text
 
     text.append(problem.message)
-    if problem.local:
+    if problem.authoritative and problem.code not in _DRIFT_CODES:
+        text.append("  fix ", style="dim")
+        text.append(problem.authoritative, style="dim")
+    elif problem.local:
         text.append(f"  {problem.local}", style="dim")
-    elif problem.authoritative:
-        text.append(f"  → {problem.authoritative}", style="dim")
     if problem.confidence is not None:
         text.append(f"  (confidence {problem.confidence:.2f})", style="dim")
     return text
@@ -220,6 +248,71 @@ def _tally(report: Report) -> Text:
     if not written:
         text.append("nothing to report", style="dim")
     return text
+
+
+def render_stats(stats: Stats, console: Console) -> None:
+    """Print bibliography health metrics.
+
+    Deliberately plain: these are observations, not findings, and colouring
+    them would compete with the status colours that do mean something.
+    """
+    if not stats.total:
+        return
+
+    console.print(Text("  bibliography", style="dim"))
+    console.print()
+
+    rows: list[tuple[str, str]] = [
+        ("references", str(stats.total)),
+        (
+            "with a DOI",
+            f"{stats.with_doi}  ({stats.share(stats.with_doi):.0%})",
+        ),
+    ]
+    if stats.median_year is not None:
+        rows.append(
+            (
+                "years",
+                f"{stats.oldest}–{stats.newest}   median {stats.median_year}",
+            )
+        )
+        rows.append(
+            (
+                f"older than {OLD_REFERENCE_YEARS}y",
+                f"{stats.old_references}  ({stats.share(stats.old_references):.0%})",
+            )
+        )
+    if stats.preprints:
+        rows.append(
+            ("preprints", f"{stats.preprints}  ({stats.share(stats.preprints):.0%})")
+        )
+    if stats.self_citations:
+        rows.append(
+            (
+                "self-citations",
+                f"{stats.self_citations}  ({stats.share(stats.self_citations):.0%})",
+            )
+        )
+
+    width = max(len(label) for label, _ in rows)
+    for label, value in rows:
+        console.print(Text("  ") + Text(label.rjust(width), style="dim") + Text("  " + value))
+
+    if stats.venues:
+        console.print()
+        console.print(Text("  " + "top venues".rjust(width), style="dim"))
+        for name, count in stats.venues[:3]:
+            trimmed = name if len(name) <= 52 else name[:49] + "…"
+            console.print(
+                Text("  " + " " * width + "  ")
+                + Text(f"{count:>3}  ", style="dim")
+                + Text(trimmed)
+            )
+
+    for note in stats.notes:
+        console.print()
+        console.print(Text("  · ", style="dim") + Text(note, style="dim"))
+    console.print()
 
 
 def render_json(report: Report, *, indent: int | None = 2) -> str:

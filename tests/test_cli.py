@@ -361,3 +361,158 @@ class TestPdfInput:
         path.write_text("I am not a PDF", encoding="utf-8")
         assert main([str(path)]) == EXIT_USAGE
         assert "could not read the PDF" in capsys.readouterr().err
+
+
+STYLE_BIB = """@inproceedings{devlin2019,
+  title     = {BERT: Pre-training of Transformers},
+  author    = {Devlin, Jacob},
+  booktitle = {NAACL},
+  year      = {2019}
+}
+"""
+
+
+class TestStyleChecks:
+    @respx.mock
+    def test_case_protection_is_reported_by_default(
+        self, tmp_path: Path, crossref_fixture: Loader, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        respx.get(url__startswith=WORKS).mock(
+            return_value=httpx.Response(200, json=crossref_fixture("search_empty"))
+        )
+        path = tmp_path / "s.bib"
+        path.write_text(STYLE_BIB, encoding="utf-8")
+        main([str(path)])
+        assert "BERT" in capsys.readouterr().out
+
+    @respx.mock
+    def test_no_style_turns_them_off(
+        self, tmp_path: Path, crossref_fixture: Loader, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        respx.get(url__startswith=WORKS).mock(
+            return_value=httpx.Response(200, json=crossref_fixture("search_empty"))
+        )
+        path = tmp_path / "s.bib"
+        path.write_text(STYLE_BIB, encoding="utf-8")
+        main([str(path), "--no-style"])
+        assert "lower-cased" not in capsys.readouterr().out
+
+    def test_an_unknown_style_is_a_usage_error(self, bib_file: Path) -> None:
+        assert main([str(bib_file), "--style", "chicago-ish"]) == EXIT_USAGE
+
+    @respx.mock
+    def test_a_local_suggestion_is_not_labelled_as_crossref(
+        self, tmp_path: Path, crossref_fixture: Loader, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """bibcheck's own proposal must never be presented as what a registry said."""
+        respx.get(url__startswith=WORKS).mock(
+            return_value=httpx.Response(200, json=crossref_fixture("search_empty"))
+        )
+        path = tmp_path / "s.bib"
+        path.write_text(STYLE_BIB, encoding="utf-8")
+        main([str(path)])
+        # Collapse the terminal's wrapping before asserting on the phrasing.
+        out = " ".join(capsys.readouterr().out.split())
+        assert "lower-cased" in out
+        assert "fix {BERT}" in out
+        assert "crossref {BERT}" not in out
+
+    @respx.mock
+    def test_fix_applies_brace_protection(
+        self, tmp_path: Path, crossref_fixture: Loader
+    ) -> None:
+        """A local formatting fix needs no registry resolution."""
+        respx.get(url__startswith=WORKS).mock(
+            return_value=httpx.Response(200, json=crossref_fixture("search_empty"))
+        )
+        path = tmp_path / "s.bib"
+        path.write_text(STYLE_BIB, encoding="utf-8")
+        target = tmp_path / "fixed.bib"
+        assert main([str(path), "--fix", str(target)]) == EXIT_OK
+        assert "{BERT}" in target.read_text(encoding="utf-8")
+
+
+class TestStatsFlag:
+    @respx.mock
+    def test_stats_are_printed_on_request(
+        self, bib_file: Path, crossref_fixture: Loader, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _mock(crossref_fixture)
+        main([str(bib_file), "--stats"])
+        out = capsys.readouterr().out
+        assert "bibliography" in out
+        assert "references" in out
+
+    @respx.mock
+    def test_stats_are_absent_by_default(
+        self, bib_file: Path, crossref_fixture: Loader, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _mock(crossref_fixture)
+        main([str(bib_file)])
+        assert "with a DOI" not in capsys.readouterr().out
+
+    @respx.mock
+    def test_self_authors_are_counted(
+        self, bib_file: Path, crossref_fixture: Loader, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _mock(crossref_fixture)
+        main([str(bib_file), "--stats", "--self-author", "He"])
+        assert "self-citations" in capsys.readouterr().out
+
+
+class TestCiteCommand:
+    @respx.mock
+    def test_it_prints_bibtex_to_stdout(
+        self, crossref_fixture: Loader, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        respx.get(url__startswith=f"{WORKS}/10.1109/").mock(
+            return_value=httpx.Response(200, json=crossref_fixture("work_resnet"))
+        )
+        assert main(["cite", "10.1109/CVPR.2016.90"]) == EXIT_OK
+        out = capsys.readouterr().out
+        assert out.lstrip().startswith("@")
+        assert "Deep Residual Learning" in out
+
+    @respx.mock
+    def test_stdout_stays_pasteable_with_diagnostics_on_stderr(
+        self, crossref_fixture: Loader, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """`bibcheck cite X >> refs.bib` must append valid BibTeX and nothing else."""
+        from bibcheck.parsing import parse_bibtex
+
+        respx.get(url__startswith=WORKS).mock(
+            return_value=httpx.Response(200, json=crossref_fixture("search_noident"))
+        )
+        main(["cite", "A Paper With No Identifier At All"])
+        captured = capsys.readouterr()
+        assert parse_bibtex(captured.out).problems == ()
+        assert "confidence" in captured.err  # the title-match warning
+
+    @respx.mock
+    def test_a_missing_work_exits_nonzero(
+        self, crossref_fixture: Loader, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        respx.get(url__startswith=f"{WORKS}/10.9999/").mock(
+            return_value=httpx.Response(404, json=crossref_fixture("not_found"))
+        )
+        assert main(["cite", "10.9999/nope"]) == EXIT_FAILED
+        assert capsys.readouterr().out.strip() == ""
+
+    @respx.mock
+    def test_a_multi_word_title_is_joined(
+        self, crossref_fixture: Loader
+    ) -> None:
+        route = respx.get(url__startswith=WORKS).mock(
+            return_value=httpx.Response(200, json=crossref_fixture("search_noident"))
+        )
+        main(["cite", "A", "Paper", "With", "No", "Identifier", "At", "All"])
+        params = route.calls.last.request.url.params
+        assert params["query.bibliographic"] == "A Paper With No Identifier At All"
+
+    def test_a_file_named_cite_is_not_mistaken_for_the_subcommand(
+        self, tmp_path: Path
+    ) -> None:
+        """Only the bare word is the subcommand; a path is still a path."""
+        path = tmp_path / "cite.bib"
+        path.write_text("@article{a, title={T}, author={A}, year={2020}}", encoding="utf-8")
+        assert main([str(path), "--offline"]) == EXIT_OK

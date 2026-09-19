@@ -106,6 +106,16 @@ class Code(str, Enum):
     EXPRESSION_OF_CONCERN = "expression_of_concern"
     PREPRINT_SUPERSEDED = "preprint_superseded"
 
+    # Style and hygiene -- things a reviewer or a style file will punish, and
+    # that no amount of network lookup can tell you.
+    CASE_PROTECTION = "case_protection"
+    MISSING_STYLE_FIELD = "missing_style_field"
+    SUSPECT_PAGES = "suspect_pages"
+    INCONSISTENT_VENUE = "inconsistent_venue"
+    INCONSISTENT_AUTHOR = "inconsistent_author"
+    PREPRINT_ONLY = "preprint_only"
+    STALE_URL_ENTRY = "stale_url_entry"
+
     # Bibliography-level
     DUPLICATE_WORK = "duplicate_work"
     UNCITED_ENTRY = "uncited_entry"

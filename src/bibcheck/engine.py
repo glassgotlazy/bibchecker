@@ -40,6 +40,7 @@ from .models import (
     WorkRecord,
 )
 from .parsing import ParsedBib, entry_metadata, structural_problems
+from .style import STYLES, Style, bibliography_style_checks, local_checks
 
 __all__ = ["check_bibliography", "check_entry"]
 
@@ -52,6 +53,7 @@ async def check_bibliography(
     manuscript_text: str | None = None,
     crosscheck: CrossCheck | None = None,
     client: CrossrefClient | None = None,
+    style: Style | str | None = None,
 ) -> Report:
     """Check every entry, then apply the bibliography-level rules."""
     metadata_by_key = {entry.key: entry_metadata(entry) for entry in parsed.entries}
@@ -61,6 +63,22 @@ async def check_bibliography(
     else:
         async with CrossrefClient(config) as owned:
             reports = await _run_all(parsed.entries, metadata_by_key, owned)
+
+    # Style checks are local and cost nothing, so they always run: they catch
+    # the class of problem no amount of registry lookup ever will.
+    if style is not None:
+        resolved_style = STYLES.get(style, STYLES["ieee"]) if isinstance(style, str) else style
+        by_key = {entry.key: entry for entry in parsed.entries}
+        wide = bibliography_style_checks(parsed.entries)
+        reports = tuple(
+            _with_problems(
+                report,
+                local_checks(by_key[report.key], resolved_style) + wide.get(report.key, ())
+                if report.key in by_key
+                else (),
+            )
+            for report in reports
+        )
 
     # Checks 5 and 6 see the whole bibliography, so they run once at the end and
     # their findings are merged onto the per-entry reports.
