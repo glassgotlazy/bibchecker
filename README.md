@@ -17,10 +17,10 @@ bibcheck refs.bib --offline          # cache only, no network
 
 ## Status
 
-Under construction, built in order. **Step 1 is complete**: the data model,
-BibTeX parsing and the normalization layer, with 163 tests and `mypy --strict`
-clean. The Crossref client, the six checks, the reporting layer and `--fix` are
-next.
+Under construction, built in order. **Steps 1 and 2 are complete**: the data
+model, BibTeX parsing and normalization; and the Crossref client with its disk
+cache and rate limiting. 273 tests, `mypy --strict` clean. The six checks, the
+reporting layer and `--fix` are next.
 
 ## Checks
 
@@ -96,6 +96,44 @@ Other fields get the same treatment: `10--20`, `10-20` and `1234--56` (the elide
 form of `1234--1256`) all reduce to a comparable `PageRange`; a value that will
 not parse yields `None`, meaning *cannot compare*, never a false mismatch.
 
+### Network, cache and rate limiting
+
+The Crossref client is built around three properties, in this order of
+importance:
+
+**Nothing crashes the run.** Every failure — a timeout, a DNS error, a 500, a
+body that is not JSON, a JSON body of the wrong shape — becomes a
+`NETWORK_ERROR` outcome for *one entry*. Thirty-nine good references are never
+lost to one bad one.
+
+**Everything is cached, including 404s.** A fabricated DOI is the most
+interesting result the tool produces, and not caching it would mean re-fetching
+it on every run. Negative caching is what makes `--offline` and fast re-runs
+work at all. A 5xx, by contrast, is *never* cached — a transient failure must
+not poison the cache for 30 days. The cache is a plain tree of JSON files:
+readable, greppable, sharded so one bibliography does not make one huge
+directory, written atomically so an interrupt cannot truncate a record, and
+safe to delete at any time.
+
+**The server is treated as a guest treats a host.** Concurrency is capped by a
+semaphore (default 8), `Retry-After` is obeyed, and backoff is exponential
+*with jitter* — without jitter, eight workers that all get a 429 retry in
+lockstep and trip the limit again together. A contact email moves requests into
+Crossref's polite pool; it is a courtesy, not a key, and everything works
+without one.
+
+Three outcomes are kept strictly apart, because conflating them is how a tool
+like this lies to its user:
+
+| Outcome | Meaning |
+|---|---|
+| `NOT_FOUND` | We asked, and the registry said no. This is what a fabricated DOI looks like. |
+| `NETWORK_ERROR` | We asked and never got an answer. |
+| `OFFLINE_MISS` | We never asked, because `--offline` was set and the cache had nothing. |
+
+Only the first is a finding about the *citation*. The other two are findings
+about the *run*, and are reported as such.
+
 ### Failure handling
 
 Parsing never raises. A syntax error, a duplicate key and a duplicate field are
@@ -117,6 +155,11 @@ Python 3.11+. No API keys are required for the default path.
 pytest          # the suite runs with zero network access
 mypy            # strict
 ```
+
+The "zero network access" claim is enforced, not asserted: an autouse fixture
+in `tests/conftest.py` monkeypatches `socket.connect` and `getaddrinfo` to
+raise, so any test that reaches for a real socket fails loudly. Crossref
+traffic is served from recorded JSON in `tests/data/crossref/` through respx.
 
 ## License
 

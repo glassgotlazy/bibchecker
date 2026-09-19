@@ -1,0 +1,58 @@
+{
+  "status": "ok",
+  "message-type": "work",
+  "message-version": "1.0.0",
+  "message": {
+    "DOI": "10.1109/cvpr.2016.90",
+    "type": "proceedings-article",
+    "title": [
+      "Deep Residual Learning for Image Recognition"
+    ],
+    "author": [
+      {
+        "given": "Kaiming",
+        "family": "He",
+        "sequence": "first"
+      },
+      {
+        "given": "Xiangyu",
+        "family": "Zhang",
+        "sequence": "additional"
+      },
+      {
+        "given": "Shaoqing",
+        "family": "Ren",
+        "sequence": "additional"
+      },
+      {
+        "given": "Jian",
+        "family": "Sun",
+        "sequence": "additional"
+      }
+    ],
+    "container-title": [
+      "2016 IEEE Conference on Computer Vision and Pattern Recognition (CVPR)"
+    ],
+    "short-container-title": [
+      "CVPR"
+    ],
+    "page": "770-778",
+    "publisher": "IEEE",
+    "issued": {
+      "date-parts": [
+        [
+          2016,
+          6
+        ]
+      ]
+    },
+    "published-print": {
+      "date-parts": [
+        [
+          2016,
+          6
+        ]
+      ]
+    }
+  }
+}

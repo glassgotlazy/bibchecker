@@ -1,0 +1,46 @@
+{
+  "status": "ok",
+  "message-type": "work",
+  "message-version": "1.0.0",
+  "message": {
+    "DOI": "10.48550/arxiv.2004.05150",
+    "type": "posted-content",
+    "subtype": "preprint",
+    "title": [
+      "Longformer: The Long-Document Transformer"
+    ],
+    "author": [
+      {
+        "given": "Iz",
+        "family": "Beltagy"
+      },
+      {
+        "given": "Matthew E.",
+        "family": "Peters"
+      },
+      {
+        "given": "Arman",
+        "family": "Cohan"
+      }
+    ],
+    "publisher": "arXiv",
+    "issued": {
+      "date-parts": [
+        [
+          2020,
+          4,
+          10
+        ]
+      ]
+    },
+    "relation": {
+      "is-preprint-of": [
+        {
+          "id": "10.1000/published.2021",
+          "id-type": "doi",
+          "asserted-by": "subject"
+        }
+      ]
+    }
+  }
+}

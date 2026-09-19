@@ -1,0 +1,67 @@
+{
+  "status": "ok",
+  "message-type": "work-list",
+  "message-version": "1.0.0",
+  "message": {
+    "facets": {},
+    "total-results": 2,
+    "items-per-page": 5,
+    "query": {
+      "start-index": 0,
+      "search-terms": null
+    },
+    "items": [
+      {
+        "DOI": "10.1000/searchhit.2018",
+        "type": "journal-article",
+        "title": [
+          "A Paper With No Identifier At All"
+        ],
+        "author": [
+          {
+            "given": "John",
+            "family": "Smith"
+          }
+        ],
+        "container-title": [
+          "Some Journal"
+        ],
+        "volume": "4",
+        "page": "10-20",
+        "issued": {
+          "date-parts": [
+            [
+              2018,
+              7
+            ]
+          ]
+        },
+        "score": 88.4
+      },
+      {
+        "DOI": "10.1000/unrelated.2001",
+        "type": "journal-article",
+        "title": [
+          "Something Else Entirely About Marine Biology"
+        ],
+        "author": [
+          {
+            "given": "Ada",
+            "family": "Other"
+          }
+        ],
+        "container-title": [
+          "Journal of Other Things"
+        ],
+        "issued": {
+          "date-parts": [
+            [
+              2001
+            ]
+          ]
+        },
+        "score": 21.0
+      }
+    ]
+  }
+}

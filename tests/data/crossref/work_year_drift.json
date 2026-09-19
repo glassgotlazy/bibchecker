@@ -1,0 +1,38 @@
+{
+  "status": "ok",
+  "message-type": "work",
+  "message-version": "1.0.0",
+  "message": {
+    "DOI": "10.1000/drift.2019",
+    "type": "journal-article",
+    "title": [
+      "A Paper Whose Year Is Wrong In The Bib"
+    ],
+    "author": [
+      {
+        "given": "Jane",
+        "family": "Doe"
+      },
+      {
+        "given": "Richard",
+        "family": "Roe"
+      }
+    ],
+    "container-title": [
+      "Journal of Reproducible Findings"
+    ],
+    "volume": "12",
+    "issue": "3",
+    "page": "45-67",
+    "publisher": "Example Press",
+    "issued": {
+      "date-parts": [
+        [
+          2019,
+          4,
+          2
+        ]
+      ]
+    }
+  }
+}

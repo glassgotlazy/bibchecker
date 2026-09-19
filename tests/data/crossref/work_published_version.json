@@ -1,0 +1,47 @@
+{
+  "status": "ok",
+  "message-type": "work",
+  "message-version": "1.0.0",
+  "message": {
+    "DOI": "10.1000/published.2021",
+    "type": "proceedings-article",
+    "title": [
+      "Longformer: The Long-Document Transformer"
+    ],
+    "author": [
+      {
+        "given": "Iz",
+        "family": "Beltagy"
+      },
+      {
+        "given": "Matthew E.",
+        "family": "Peters"
+      },
+      {
+        "given": "Arman",
+        "family": "Cohan"
+      }
+    ],
+    "container-title": [
+      "Proceedings of the Conference on Long Documents"
+    ],
+    "page": "1-14",
+    "publisher": "ACL",
+    "issued": {
+      "date-parts": [
+        [
+          2021,
+          8
+        ]
+      ]
+    },
+    "relation": {
+      "has-preprint": [
+        {
+          "id": "10.48550/arxiv.2004.05150",
+          "id-type": "doi"
+        }
+      ]
+    }
+  }
+}
