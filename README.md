@@ -450,6 +450,35 @@ pip install -e ".[dev]"
 
 Python 3.11+. No API keys are required for the default path.
 
+## Design skill
+
+`.claude/skills/ui-ux-pro-max/` vendors the MIT-licensed
+[ui-ux-pro-max](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill) skill
+so UI work on the landing page has a searchable reference to check against
+rather than being decided by taste alone. It is pure-stdlib Python and runs
+with no network and no install step:
+
+```sh
+python3 .claude/skills/ui-ux-pro-max/scripts/search.py "visible focus keyboard" --domain ux
+```
+
+See `.claude/skills/ui-ux-pro-max/VENDORED.md` for the upstream commit and the
+one local change (upstream invokes the script through `${CLAUDE_PLUGIN_ROOT}`,
+which is only set for a plugin install).
+
+Auditing the landing page against it found three real defects, all of which are
+now fixed and all of which were invisible to the eye:
+
+- `--faint` carried section headings, captions, the footer and DOIs, and
+  **failed WCAG AA in both themes** (3.69:1 dark, 3.07:1 light).
+- Buttons were ~38px tall, under the 44px touch-target floor, and the chip's
+  remove control was far smaller.
+- The file input is visually hidden inside its label, so focusing it by
+  keyboard showed **no ring at all**.
+
+The page now measures zero contrast failures in either theme, verified against
+computed styles in a real browser rather than by inspection.
+
 ## Development
 
 ```sh

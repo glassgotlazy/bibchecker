@@ -13,7 +13,7 @@
     --line: #1e2228;
     --ink: #e8eaed;
     --dim: #9aa1a9;
-    --faint: #666c74;
+    --faint: #787f88;   /* 4.84:1 on --bg, 4.64:1 on --panel */
     --ok: #6ee7a0;
     --warn: #e3b341;
     --critical: #ff7b72;
@@ -24,8 +24,8 @@
   @media (prefers-color-scheme: light) {
     :root:not([data-theme="dark"]) {
       --bg: #fbfbfa; --panel: #ffffff; --line: #e7e5e1;
-      --ink: #14161a; --dim: #5a6069; --faint: #8b9198;
-      --ok: #1a7f4b; --warn: #9a6b00; --critical: #c0392b;
+      --ink: #14161a; --dim: #5a6069; --faint: #6d737a;
+      --ok: #1a7f4b; --warn: #956700; --critical: #c0392b;
       --unresolved: #2b6cb0; --neutral: #5a6069;
       color-scheme: light;
     }
@@ -128,20 +128,54 @@
   .chip b { color: var(--ink); font-weight: 600; }
   .chip button {
     background: none; border: 0; color: var(--faint); cursor: pointer;
-    font-size: 15px; line-height: 1; padding: 0 0 0 7px;
+    font-size: 15px; line-height: 1; margin-left: 4px;
+    /* A bare glyph is a tiny hit area; give it a real one without
+       enlarging the chip. */
+    min-width: 28px; min-height: 28px; border-radius: 999px;
+    display: inline-flex; align-items: center; justify-content: center;
   }
   .chip button:hover { color: var(--critical); }
   .actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 18px; }
   button.primary, label.pick {
     font: inherit; font-size: 14.5px; font-weight: 600; cursor: pointer;
-    border-radius: 8px; padding: 9px 20px; border: 1px solid var(--line);
+    border-radius: 8px; padding: 0 20px; border: 1px solid var(--line);
     background: var(--bg); color: var(--ink);
+    /* 44px is the touch-target floor; these were ~38px. */
+    min-height: 44px; display: inline-flex; align-items: center; justify-content: center;
   }
   button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
   button.primary:disabled { opacity: .45; cursor: not-allowed; }
   button.primary:not(:disabled):hover, label.pick:hover { opacity: .88; }
   .hint { font-size: 13px; color: var(--faint); margin-top: 14px; text-align: center; }
+
+  /* Every operable control gets a visible ring. The file input is visually
+     hidden inside its label, so its focus has to be shown on the label. */
+  a:focus-visible,
+  button:focus-visible,
+  label.pick:has(input:focus-visible),
+  .hint a:focus-visible {
+    outline: 2px solid var(--ok);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  /* Fallback for engines without :has() -- the ring still appears, just on
+     the input's box rather than the label's. */
+  @supports not selector(:has(*)) {
+    .visually-hidden:focus-visible {
+      position: static; width: auto; height: auto; clip: auto;
+      outline: 2px solid var(--ok); outline-offset: 2px;
+    }
+  }
   .hint a { color: var(--dim); cursor: pointer; }
+  /* A real button that reads as inline text: native focus and Enter/Space
+     behaviour, no hand-rolled key handling, and the WCAG inline-target
+     exception applies because it sits inside a sentence. */
+  button.linklike {
+    font: inherit; background: none; border: 0; padding: 0; cursor: pointer;
+    color: var(--dim); text-decoration: underline;
+    text-decoration-color: var(--faint); text-underline-offset: 3px;
+  }
+  button.linklike:hover { text-decoration-color: currentColor; }
   #result { margin-top: 26px; }
   .msg {
     border: 1px solid var(--line); border-left: 2px solid var(--critical);
@@ -253,7 +287,7 @@
       <button class="primary" id="run" disabled>Check references</button>
     </div>
     <p class="hint">No account, no upload limit beyond file size — or
-      <a id="sample">try it with a sample bibliography</a>.</p>
+      <button type="button" id="sample" class="linklike">try it with a sample bibliography</button>.</p>
   </div>
 
   <div id="result" aria-live="polite"></div>
